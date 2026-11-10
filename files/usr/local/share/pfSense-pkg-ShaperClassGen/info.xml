@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<pfsensepkgs>
+<package>
+	<name>ShaperClassGen</name>
+	<internal_name>shaperclassgen</internal_name>
+	<descr><![CDATA[Limiter toolkit: traffic classes as limiter child queues (WF2Q+) with floating match rules, Autorate, Limiter Live and a periodic speed test.]]></descr>
+	<website>https://www.pfsense.org/</website>
+	<category>Network Management</category>
+	<version>%%PKGVERSION%%</version>
+	<configurationfile>shaperclassgen.xml</configurationfile>
+	<maintainer>local</maintainer>
+</package>
+</pfsensepkgs>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<copyright>
+	<![CDATA[
+/*
+ * shaperclassgen.xml
+ * Licensed under the Apache License, Version 2.0
+ */
+	]]>
+	</copyright>
+	<name>shaperclassgen</name>
+	<version>%%PKGVERSION%%</version>
+	<title>Firewall/Traffic Shaper: Class Generator</title>
+	<include_file>/usr/local/pkg/shaperclassgen.inc</include_file>
+	<menu>
+		<name>Shaper Class Generator</name>
+		<tooltiptext>Create traffic classes as limiter queues</tooltiptext>
+		<section>Firewall</section>
+		<url>/firewall_shaper_classgen.php</url>
+	</menu>
+	<menu>
+		<name>Limiter Live</name>
+		<tooltiptext>Live load of all limiters and queues</tooltiptext>
+		<section>Status</section>
+		<url>/status_limiters_live.php</url>
+	</menu>
+	<menu>
+		<name>Speedtest</name>
+		<tooltiptext>Periodic speed test with history</tooltiptext>
+		<section>Status</section>
+		<url>/status_speedtest.php</url>
+	</menu>
+	<custom_php_install_command>
+		shaperclassgen_install();
+	</custom_php_install_command>
+	<custom_php_deinstall_command>
+		shaperclassgen_deinstall();
+	</custom_php_deinstall_command>
+</packagegui>
