@@ -2,6 +2,8 @@
 
 English · [Deutsch](README.de.md)
 
+![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
+
 A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.2) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
@@ -51,6 +53,8 @@ or `SCG Pipe` in the description). Every change ends up in the config history.
 
 ## Class schemes
 
+![Class Generator with the four-class scheme](docs/images/classes.png)
+
 | Scheme | Classes (weight) |
 |---|---|
 | **4 classes** (default for new installs) | qRealtime 100 (telephony, games, DNS/NTP/ICMP, real-time devices), qInteractive 50 (SSH, RDP, VNC, TeamSpeak), qDefault 20, qBulk 2 (P2P, mail, bulk devices / penalty box) |
@@ -61,6 +65,8 @@ low 0.2 or your own value), limited to 1–100. When you switch schemes, classes
 and application assignments are converted automatically and shown for review.
 
 ## What is generated
+
+![Limiter queues per interface and class with weights and live rates](docs/images/queues.png)
 
 - Per enabled interface and limiter, 4 or 7 queues `D_<tag>_<class>` and
   `U_<tag>_<class>`.
@@ -74,6 +80,8 @@ and application assignments are converted automatically and shown for review.
   is never shaped, so inter-VLAN traffic stays free.
 
 ## Recognising games
+
+![Game recognition: vendor ports, game servers and publisher networks](docs/images/games.png)
 
 pf and dummynet can only match addresses, ports and protocols; there is no
 application detection like the old Layer7 or today's nDPI for limiters. The
@@ -100,6 +108,8 @@ package offers four ways that can be combined:
 
 ## Autorate
 
+![Autorate settings and service status](docs/images/autorate.png)
+
 Firewall > Traffic Shaper > Autorate adjusts the running limiter bandwidth
 (`dnctl pipe N config bw …`); the saved configuration stays untouched.
 
@@ -124,6 +134,8 @@ fine and recommended. Autorate only touches the limiters.
 
 ## Limiter Live
 
+![Limiter Live: latency band and Autorate state](docs/images/live.png)
+
 Status > Limiter Live shows all limiters and child queues live (rate, share of
 the limiter, packets/s, drops, flows), interfaces grouped WAN → VPN → shaped →
 not shaped, a class matrix per interface, the latency of the last 120 s and the
@@ -133,6 +145,8 @@ For stable values `net.inet.ip.dummynet.expire=0` is needed; the page offers a
 button that sets it immediately and as a system tunable.
 
 ## Speedtest
+
+![Speedtest history: download, upload and latency under load](docs/images/speed.png)
 
 Status > Speedtest measures the raw line from pfSense itself, by default every
 30 minutes (at minute 7/37):

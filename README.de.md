@@ -2,11 +2,15 @@
 
 [English](README.md) · Deutsch
 
+![pfSense Limiter Toolkit: 12,8 ms Ping im Mittel bei 803 Mbit/s Download](docs/images/hero.png)
+
 Klassen-Generator für den pfSense Traffic Shaper. Legt Klassen als
 **Limiter-Child-Queues** unter deinen eigenen Limitern an und erzeugt die
 Port-Matchings des Wizards als **Floating-Match-Regeln**.
 
 ## Klassenschemata
+
+![Klassen-Generator mit dem 4-Klassen-Schema](docs/images/classes.png)
 
 | Schema | Klassen (Gewicht) |
 |---|---|
@@ -56,6 +60,10 @@ landet in der Config-History (Diagnostics > Backup & Restore > Config History).
 
 ## Live-Status
 
+![Limiter Live: Latenzband und Autorate-Zustand](docs/images/live.png)
+
+![Limiter-Queues je Interface und Klasse mit Gewichten und Live-Raten](docs/images/queues.png)
+
 **Status > Limiter Live** zeigt alle Limiter und ihre Child-Queues live:
 Rate, Anteil an der Limiter-Bandbreite (Balken), Pakete/s, Drops und aktive
 Flows. Gibt es Queues nach dem Schema `D_/U_<Kürzel>_<Klasse>`, erscheint
@@ -67,6 +75,8 @@ löscht dummynet kurz leere Queues samt Zählern. Die Seite bietet dafür einen
 Knopf an (setzt den Wert sofort und als System Tunable).
 
 ## Autorate
+
+![Autorate-Einstellungen und Dienststatus](docs/images/autorate.png)
 
 **Firewall > Traffic Shaper > Autorate** regelt die Bandbreite der Limiter
 laufend nach. Download-Shaping wirkt nur, solange der eigene Limiter die
@@ -103,6 +113,8 @@ und Kennzahlen der letzten 10 s (Mittel, P95, Jitter, Verlust).
 
 ## Speedtest
 
+![Speedtest-Verlauf: Download, Upload und Latenz unter Last](docs/images/speed.png)
+
 **Status > Speedtest** (auch als Tab) misst regelmäßig (Standard alle
 30 Minuten, zur Minute 7/37) die rohe Leitung direkt von der pfSense aus:
 
@@ -125,6 +137,8 @@ und Kennzahlen der letzten 10 s (Mittel, P95, Jitter, Verlust).
   /usr/local/pkg/shaperclassgen_speedtest.php manual`.
 
 ## Spiele erkennen
+
+![Spiele-Erkennung: Hersteller-Ports, Spielserver und Anbieter-Netze](docs/images/games.png)
 
 pf und dummynet können nur Adressen, Ports und Protokolle unterscheiden; eine
 Anwendungserkennung wie früher Layer7 oder heute nDPI gibt es für Limiter
