@@ -455,7 +455,7 @@ class SCGAutorate {
 	public $paused = false;       /* Speedtest laeuft: nicht regeln, nichts lernen */
 	/* Latenzverlauf: je Sekunde min/avg/max/Anzahl/Verluste ueber alle Ziele */
 	public $hist = array();
-	public $histLen = 120;
+	public $histLen = 300;        /* Sekunden Latenzverlauf (kombinierter Graph: 5 min) */
 	/* Limit/erreicht je Richtung und Sekunde, damit Limiter Live den Verlauf beim Oeffnen sofort zeigt */
 	public $rhist = array();
 	public $rhistLen = 300;

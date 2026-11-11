@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.3) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.4) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -139,7 +139,7 @@ fine and recommended. Autorate only touches the limiters.
 Status > Limiter Live shows all limiters and child queues live (rate, share of
 the limiter, packets/s, drops, flows), interfaces grouped WAN → VPN → shaped →
 not shaped, a class matrix per interface, the latency of the last 120 s and the
-Autorate state. The service keeps the last 120 s of latency and the last 5 minutes of limit and throughput, so the graphs are complete as soon as you open the page. It works with any limiters, also without the generator.
+Autorate state. The service keeps the last 5 minutes of latency, limit and throughput, so the graphs are complete as soon as you open the page. A combined graph (marked *test*) shows latency and both directions over these 5 minutes in one chart: latency in ms on the left axis, throughput and limit in % of the Autorate maximum on the right, real values on hover. It works with any limiters, also without the generator.
 
 For stable values `net.inet.ip.dummynet.expire=0` is needed; the page offers a
 button that sets it immediately and as a system tunable.

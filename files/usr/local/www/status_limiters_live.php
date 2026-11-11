@@ -103,6 +103,20 @@ if ($expire !== null && $expire !== 0) {
 	.scg-group td { font-size: 85%; opacity: .75; text-transform: uppercase; letter-spacing: .04em; padding-top: 10px !important; }
 	#scg_status { margin-left: 10px; }
 	.scg-lat { width: 100%; height: 140px; display: block; }
+	.scg-comb-wrap { position: relative; }
+	.scg-comb { width: 100%; height: 240px; display: block; }
+	.scg-comb text { fill: currentColor; font-size: 10px; opacity: .7; }
+	.scg-comb .band { fill: rgba(255,92,92,.22); stroke: none; }
+	.scg-comb .lat { fill: none; stroke: #ff5c5c; stroke-width: 1.8; }
+	.scg-comb .thr { fill: none; stroke: #d89b2b; stroke-width: 1; stroke-dasharray: 4,3; opacity: .8; }
+	.scg-comb .dfill { fill: rgba(59,143,217,.14); stroke: none; }
+	.scg-comb .dach { fill: none; stroke: #3b8fd9; stroke-width: 1.4; }
+	.scg-comb .dlim { fill: none; stroke: #3b8fd9; stroke-width: 1.2; stroke-dasharray: 5,3; }
+	.scg-comb .uach { fill: none; stroke: #e8892b; stroke-width: 1.6; }
+	.scg-comb .ulim { fill: none; stroke: #e8892b; stroke-width: 1.2; stroke-dasharray: 5,3; }
+	.scg-comb .cur { stroke: currentColor; stroke-opacity: .5; stroke-dasharray: 2,2; }
+	.scg-comb-tip { position: absolute; top: 6px; pointer-events: none; z-index: 5; padding: 6px 8px; font-size: 85%;
+		background: rgba(25,25,25,.92); color: #fff; border-radius: 4px; white-space: nowrap; }
 	.scg-lat .band { fill: rgba(255,92,92,.28); stroke: none; }
 	.scg-lat .avg { fill: none; stroke: #ff5c5c; stroke-width: 1.6; }
 	.scg-lat .base { fill: none; stroke: #2f9e75; stroke-width: 1.2; stroke-dasharray: 4,3; }
@@ -145,6 +159,7 @@ if ($expire !== null && $expire !== 0) {
 	</div>
 </div>
 
+<div id="scg_combined"></div>
 <div id="scg_latency"></div>
 <div id="scg_autorate"></div>
 <div id="scg_ifaces"></div>
@@ -394,7 +409,7 @@ events.push(function() {
 				t('Latency measurement is off. Enable it on the Autorate page (it also works without Autorate control).') + '</div></div>');
 			return;
 		}
-		var hs = a.hist, W = 600, H = 140, L = 34, B = 14, N = 120;
+		var hs = a.hist.slice(-120), W = 600, H = 140, L = 34, B = 14, N = 120;
 		var now = hs.length ? hs[hs.length - 1][0] : 0;
 		var ymax = 0;
 		hs.forEach(function(r) { if (r[3] !== null && r[3] > ymax) ymax = r[3]; if (r[6] !== null && r[6] + a.threshold > ymax) ymax = r[6] + a.threshold; });
@@ -444,6 +459,121 @@ events.push(function() {
 			'<span><i style="background:#ff5c5c"></i>' + t('average') + '</span><span><i style="background:#2f9e75"></i>' + t('Base latency') + '</span>' +
 			'<span><i style="background:#d89b2b"></i>' + t('Congestion threshold') + '</span><span><i style="background:#ff5c5c;height:8px;width:3px"></i>' + t('Loss') + '</span></div>' +
 			'<div style="margin-top:4px">' + refl + '</div></div></div>');
+	}
+
+	/*
+	 * Kombinierter Graph (Test): Latenz (links, ms) und Durchsatz/Limit je
+	 * Richtung (rechts, % des Autorate-Maximums) ueber die letzten 300 s.
+	 * Download und Upload liegen in Mbit/s weit auseinander, deshalb in %.
+	 * Tooltip zeigt die echten Werte.
+	 */
+	var combHover = null;
+	function renderCombined(data) {
+		var a = data.autorate;
+		if (!a || !a.hist || !a.hist.length) { $('#scg_combined').html(''); return; }
+		var W = 900, H = 240, L = 36, R = 40, T = 8, B = 16, N = 300;
+		var hs = a.hist, rh = a.rhist || {}, dirs = a.dirs || {};
+		var now = hs[hs.length - 1][0];
+		['down', 'up'].forEach(function(d) { if (rh[d] && rh[d].length) now = Math.max(now, rh[d][rh[d].length - 1][0]); });
+		var t0 = now - N + 1;
+		var ymax = 0;
+		hs.forEach(function(r) { if (r[0] >= t0 && r[3] !== null && r[3] > ymax) ymax = r[3]; if (r[6] !== null && r[6] + a.threshold > ymax) ymax = r[6] + a.threshold; });
+		ymax = Math.max(50, ymax * 1.1);
+		var steps = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000], st = steps[steps.length - 1];
+		for (var k = 0; k < steps.length; k++) if (ymax / steps[k] <= 5) { st = steps[k]; break; }
+		ymax = Math.ceil(ymax / st) * st;
+		function X(ts) { return L + (W - L - R) * (ts - t0) / (N - 1); }
+		function Y(v) { return (H - B) - Math.min(1, v / ymax) * (H - B - T); }
+		function P(pct) { return (H - B) - Math.min(1.05, Math.max(0, pct)) * (H - B - T) / 1.05; }
+		var g = '';
+		for (var v = 0; v <= ymax; v += st) {
+			g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="#888" stroke-opacity=".18"/>' +
+				'<text x="' + (L - 4) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end">' + v + '</text>';
+		}
+		[0, 0.25, 0.5, 0.75, 1].forEach(function(p) {
+			g += '<text x="' + (W - R + 4) + '" y="' + (P(p) + 3).toFixed(1) + '">' + (p * 100) + '%</text>';
+		});
+		g += '<text x="' + L + '" y="' + (H - 3) + '">-5 min</text><text x="' + ((L + W - R) / 2) + '" y="' + (H - 3) + '" text-anchor="middle">-2.5 min</text>' +
+			'<text x="' + (W - R) + '" y="' + (H - 3) + '" text-anchor="end">' + t('now') + '</text>';
+		/* Durchsatz: Luecken (Dienst neu gestartet) bleiben Luecken */
+		function path(arr, idx, max, close) {
+			var segs = [], seg = null, prev = null;
+			arr.forEach(function(r) {
+				if (r[0] < t0) return;
+				if (prev === null || r[0] - prev > 3) { seg = []; segs.push(seg); }
+				seg.push([X(r[0]).toFixed(1), P(r[idx] / max).toFixed(1)]);
+				prev = r[0];
+			});
+			return segs.map(function(sg) {
+				var d = 'M' + sg.map(function(p) { return p[0] + ',' + p[1]; }).join(' L');
+				if (close) d += ' L' + sg[sg.length - 1][0] + ',' + (H - B) + ' L' + sg[0][0] + ',' + (H - B) + ' Z';
+				return d;
+			}).join(' ');
+		}
+		var lines = '';
+		if (rh.down && dirs.down) {
+			var mx = dirs.down.max;
+			lines += '<path class="dfill" d="' + path(rh.down, 2, mx, true) + '"/><path class="dach" d="' + path(rh.down, 2, mx, false) + '"/>' +
+				'<path class="dlim" d="' + path(rh.down, 1, mx, false) + '"/>';
+		}
+		if (rh.up && dirs.up) {
+			var mu = dirs.up.max;
+			lines += '<path class="uach" d="' + path(rh.up, 2, mu, false) + '"/><path class="ulim" d="' + path(rh.up, 1, mu, false) + '"/>';
+		}
+		var upp = [], dnp = [], avg = '', thr = '', prevT = null;
+		hs.forEach(function(r) {
+			if (r[0] < t0) return;
+			var x = X(r[0]).toFixed(1);
+			if (r[1] !== null) {
+				upp.push(x + ',' + Y(r[3]).toFixed(1)); dnp.unshift(x + ',' + Y(r[1]).toFixed(1));
+				avg += (prevT === null || r[0] - prevT > 3 ? ' M' : ' L') + x + ',' + Y(r[2]).toFixed(1);
+				prevT = r[0];
+			}
+			if (r[6] !== null) thr += (thr ? ' L' : 'M') + x + ',' + Y(r[6] + a.threshold).toFixed(1);
+		});
+		var svg = '<svg class="scg-comb" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + g + lines +
+			(upp.length ? '<path class="band" d="M' + upp.concat(dnp).join(' L') + ' Z"/>' : '') +
+			(thr ? '<path class="thr" d="' + thr + '"/>' : '') + (avg ? '<path class="lat" d="' + avg + '"/>' : '') +
+			'<line class="cur" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" style="display:none"/></svg>';
+		var leg = '<div class="scg-legend">' +
+			'<span><i style="background:#ff5c5c"></i>' + t('Latency (ms, left)') + '</span>' +
+			'<span><i style="background:#d89b2b"></i>' + t('Congestion threshold') + '</span>' +
+			'<span><i style="background:#3b8fd9"></i>' + t('Download achieved') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#3b8fd9 0 4px,transparent 4px 6px)"></i>' + t('Download limit') + '</span>' +
+			'<span><i style="background:#e8892b"></i>' + t('Upload achieved') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#e8892b 0 4px,transparent 4px 6px)"></i>' + t('Upload limit') + '</span>' +
+			'<span class="text-muted">' + t('Throughput in % of the Autorate maximum (right axis)') + '</span></div>';
+		$('#scg_combined').html('<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' +
+			t('Latency and throughput') + ' <span class="label label-info">' + t('test') + '</span> <small>' + t('last 5 minutes') + '</small></h2></div>' +
+			'<div class="panel-body"><div class="scg-comb-wrap">' + svg + '<div class="scg-comb-tip" style="display:none"></div></div>' + leg + '</div></div>');
+
+		/* Tooltip: echte Werte zur Sekunde unter dem Mauszeiger, bleibt beim Neuzeichnen stehen */
+		var wrap = $('#scg_combined .scg-comb-wrap'), el = wrap.find('svg'), tip = wrap.find('.scg-comb-tip'), cur = el.find('.cur');
+		function find(arr, ts) {
+			var best = null, bd = 3;
+			(arr || []).forEach(function(r) { var dd = Math.abs(r[0] - ts); if (dd <= bd) { bd = dd; best = r; } });
+			return best;
+		}
+		function show(frac) {
+			var ts = Math.round(t0 + (frac * W - L) / (W - L - R) * (N - 1));
+			if (ts < t0 || ts > now) { tip.hide(); cur.hide(); return; }
+			var x = X(ts), lr = find(hs, ts), dr = find(rh.down, ts), ur = find(rh.up, ts);
+			var h = '<b>' + (now - ts == 0 ? t('now') : '-' + (now - ts) + ' s') + '</b>';
+			if (lr && lr[2] !== null) h += '<br>' + t('Latency') + ': <b>' + lr[2] + ' ms</b> <small>(' + lr[1] + '&ndash;' + lr[3] + ')</small>';
+			else if (lr && lr[5]) h += '<br>' + t('Latency') + ': ' + t('lost');
+			if (dr) h += '<br>&darr; ' + fmtRate(dr[2] * 1000) + ' <small>/ Limit ' + fmtRate(dr[1] * 1000) + '</small>';
+			if (ur) h += '<br>&uarr; ' + fmtRate(ur[2] * 1000) + ' <small>/ Limit ' + fmtRate(ur[1] * 1000) + '</small>';
+			cur.attr({ x1: x, x2: x }).show();
+			tip.html(h).show();
+			var rect = el[0].getBoundingClientRect(), px = x / W * rect.width, tw = tip.outerWidth();
+			tip.css('left', Math.max(0, Math.min(rect.width - tw, px + 12)) + 'px');
+		}
+		el.on('mousemove', function(e) {
+			var rect = this.getBoundingClientRect();
+			combHover = (e.clientX - rect.left) / rect.width;
+			show(combHover);
+		}).on('mouseleave', function() { combHover = null; tip.hide(); cur.hide(); });
+		if (combHover !== null) show(combHover);
 	}
 
 	function renderAutorate(data) {
@@ -562,6 +692,7 @@ events.push(function() {
 	}
 
 	function renderAll(data) {
+		renderCombined(data);
 		renderLatency(data);
 		renderAutorate(data);
 		renderIfaces(data);
