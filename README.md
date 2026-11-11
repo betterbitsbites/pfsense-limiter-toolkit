@@ -21,7 +21,7 @@ The GUI is English or German, following the pfSense language setting
 
 On pfSense as root (works in the default tcsh shell):
 
-    fetch -o /tmp/plt.tar.gz https://github.com/coaxx77/pfsense-limiter-toolkit/archive/refs/heads/main.tar.gz
+    fetch -o /tmp/plt.tar.gz https://github.com/betterbitsbites/pfsense-limiter-toolkit/archive/refs/heads/main.tar.gz
     cd /tmp && tar xzf plt.tar.gz && cd pfsense-limiter-toolkit-main
     sh install.sh
 

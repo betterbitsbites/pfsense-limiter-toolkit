@@ -26,7 +26,7 @@ origin: "net/${NAME}"
 comment: "Limiter toolkit: class generator, Autorate, live view, speed test"
 desc: "Creates traffic classes as limiter child queues with floating match rules, adapts limiter bandwidth to the line by latency (Autorate), shows limiters live and runs a periodic speed test."
 maintainer: "local@localhost"
-www: "https://github.com/coaxx77/pfsense-limiter-toolkit"
+www: "https://github.com/betterbitsbites/pfsense-limiter-toolkit"
 prefix: "/usr/local"
 abi: "${ABI}"
 categories: [ "net" ]
