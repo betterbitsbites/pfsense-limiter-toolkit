@@ -29,6 +29,18 @@ if (isset($_GET['getstats'])) {
 	exit;
 }
 
+/* Langzeitverlauf (Minutenwerte des Autorate-Dienstes) */
+if (isset($_GET['longhist'])) {
+	header("Content-Type: application/json");
+	header("Cache-Control: no-store");
+	$r = scg_ar_long_series((int)($_GET['hours'] ?? 24));
+	$r['now'] = time();
+	$st = scg_ar_status();
+	$r['threshold'] = $st ? floatval($st['threshold']) : 30;
+	echo json_encode($r);
+	exit;
+}
+
 $fixmsg = '';
 if ($_POST && ($_POST['act'] ?? '') == 'fixexpire') {
 	scg_dn_fix_expire();
@@ -108,7 +120,7 @@ if ($expire !== null && $expire !== 0) {
 	.scg-comb text { fill: currentColor; font-size: 10px; opacity: .7; }
 	.scg-comb .band { fill: rgba(255,92,92,.22); stroke: none; }
 	.scg-comb .lat { fill: none; stroke: #ff5c5c; stroke-width: 1.8; }
-	.scg-comb .thr { fill: none; stroke: #d89b2b; stroke-width: 1; stroke-dasharray: 4,3; opacity: .8; }
+	.scg-comb .thr { fill: none; stroke: #9aa4b2; stroke-width: 1; stroke-dasharray: 2,3; opacity: .9; }
 	.scg-comb .dfill { fill: rgba(59,143,217,.14); stroke: none; }
 	.scg-comb .dach { fill: none; stroke: #3b8fd9; stroke-width: 1.4; }
 	.scg-comb .dlim { fill: none; stroke: #3b8fd9; stroke-width: 1.2; stroke-dasharray: 5,3; }
@@ -160,6 +172,7 @@ if ($expire !== null && $expire !== 0) {
 </div>
 
 <div id="scg_combined"></div>
+<div id="scg_long"></div>
 <div id="scg_latency"></div>
 <div id="scg_autorate"></div>
 <div id="scg_ifaces"></div>
@@ -537,7 +550,7 @@ events.push(function() {
 			'<line class="cur" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" style="display:none"/></svg>';
 		var leg = '<div class="scg-legend">' +
 			'<span><i style="background:#ff5c5c"></i>' + t('Latency (ms, left)') + '</span>' +
-			'<span><i style="background:#d89b2b"></i>' + t('Congestion threshold') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#9aa4b2 0 2px,transparent 2px 4px)"></i>' + t('Congestion threshold') + '</span>' +
 			'<span><i style="background:#3b8fd9"></i>' + t('Download achieved') + '</span>' +
 			'<span><i style="background:repeating-linear-gradient(90deg,#3b8fd9 0 4px,transparent 4px 6px)"></i>' + t('Download limit') + '</span>' +
 			'<span><i style="background:#e8892b"></i>' + t('Upload achieved') + '</span>' +
@@ -574,6 +587,139 @@ events.push(function() {
 			show(combHover);
 		}).on('mouseleave', function() { combHover = null; tip.hide(); cur.hide(); });
 		if (combHover !== null) show(combHover);
+	}
+
+	/*
+	 * Langzeitgraph (Test): wie der kombinierte Graph, aber aus den
+	 * Minutenwerten des Dienstes ueber 1-48 h. Eigene Abfrage alle 60 s.
+	 */
+	var longHover = null, longData = null;
+	var LONG_HOURS = [1, 2, 3, 6, 12, 24, 48];
+	function longHours() {
+		var h = parseInt(load('longh'), 10);
+		return LONG_HOURS.indexOf(h) >= 0 ? h : 24;
+	}
+	function fetchLong() {
+		$.ajax({ url: 'status_limiters_live.php', data: { longhist: 1, hours: longHours() }, dataType: 'json', cache: false })
+			.done(function(d) { longData = d; renderLong(); });
+	}
+	function renderLong() {
+		var d = longData, hours = longHours();
+		var sel = '<select class="form-control input-sm" id="scg_longh" style="display:inline-block;width:auto;margin-left:8px">' +
+			LONG_HOURS.map(function(h) { return '<option value="' + h + '"' + (h == hours ? ' selected' : '') + '>' + h + ' h</option>'; }).join('') + '</select>';
+		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + t('Latency and throughput') +
+			' <span class="label label-info">' + t('test') + '</span> <small>' + t('history') + '</small>' + sel + '</h2></div><div class="panel-body">';
+		if (!d || !d.rows || !d.rows.length) {
+			$('#scg_long').html(head + '<p class="text-muted">' + t('No history yet. The Autorate service records one value per minute; the first point appears after one minute.') + '</p></div></div>');
+			bindLongSel();
+			return;
+		}
+		var W = 900, H = 240, L = 36, R = 40, T = 8, B = 16;
+		var t1 = d.now, t0 = t1 - hours * 3600, rows = d.rows, bucket = d.bucket || 60, thrv = d.threshold || 30;
+		var ymax = 0;
+		rows.forEach(function(r) {
+			if (r.l && r.l[2] !== null && r.l[2] > ymax) ymax = r.l[2];
+			if (r.l && r.l[6] !== null && r.l[6] + thrv > ymax) ymax = r.l[6] + thrv;
+		});
+		/* Maximum-Ausreisser kappen: Achse nach P95 der Minuten, nicht nach dem einen Extremwert */
+		var p95s = rows.filter(function(r) { return r.l && r.l[3] !== null; }).map(function(r) { return r.l[3]; }).sort(function(a, b) { return a - b; });
+		var cap = p95s.length ? p95s[Math.floor(0.98 * (p95s.length - 1))] * 1.5 : ymax;
+		ymax = Math.max(50, Math.min(ymax, Math.max(cap, 50)) * 1.1);
+		var steps = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000], st = steps[steps.length - 1];
+		for (var k = 0; k < steps.length; k++) if (ymax / steps[k] <= 5) { st = steps[k]; break; }
+		ymax = Math.ceil(ymax / st) * st;
+		function X(ts) { return L + (W - L - R) * (ts - t0) / (t1 - t0); }
+		function Y(v) { return (H - B) - Math.min(1, v / ymax) * (H - B - T); }
+		function P(p) { return (H - B) - Math.min(1.05, Math.max(0, p)) * (H - B - T) / 1.05; }
+		function hhmm(ts) { var dt = new Date(ts * 1000); return ('0' + dt.getHours()).slice(-2) + ':' + ('0' + dt.getMinutes()).slice(-2); }
+		var g = '';
+		for (var v = 0; v <= ymax; v += st) {
+			g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="#888" stroke-opacity=".18"/>' +
+				'<text x="' + (L - 4) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end">' + v + '</text>';
+		}
+		[0, 0.25, 0.5, 0.75, 1].forEach(function(p) { g += '<text x="' + (W - R + 4) + '" y="' + (P(p) + 3).toFixed(1) + '">' + (p * 100) + '%</text>'; });
+		for (var j = 0; j <= 6; j++) {
+			var ts = t0 + (t1 - t0) * j / 6;
+			g += '<text x="' + X(ts).toFixed(1) + '" y="' + (H - 3) + '" text-anchor="' + (j == 0 ? 'start' : (j == 6 ? 'end' : 'middle')) + '">' + hhmm(ts) + '</text>';
+		}
+		var gap = bucket * 3;
+		/* Linien je Groesse; Luecken (Dienst aus, pfSense neu gestartet) bleiben Luecken */
+		function segs(get) {
+			var out = [], sg = null, prev = null;
+			rows.forEach(function(r) {
+				var y = get(r);
+				if (y === null || y === undefined || isNaN(y)) { prev = null; return; }
+				if (prev === null || r.t - prev > gap) { sg = []; out.push(sg); }
+				sg.push([X(r.t + bucket / 2).toFixed(1), y.toFixed(1)]);
+				prev = r.t;
+			});
+			return out;
+		}
+		function line(get) { return segs(get).map(function(sg) { return 'M' + sg.map(function(p) { return p[0] + ',' + p[1]; }).join(' L'); }).join(' '); }
+		function area(get) {
+			return segs(get).map(function(sg) {
+				return 'M' + sg.map(function(p) { return p[0] + ',' + p[1]; }).join(' L') + ' L' + sg[sg.length - 1][0] + ',' + (H - B) + ' L' + sg[0][0] + ',' + (H - B) + ' Z';
+			}).join(' ');
+		}
+		function band(getHi, getLo) {
+			var hi = segs(getHi), lo = segs(getLo);
+			return hi.map(function(sg, i) {
+				var l = (lo[i] || []).slice().reverse();
+				return 'M' + sg.concat(l).map(function(p) { return p[0] + ',' + p[1]; }).join(' L') + ' Z';
+			}).join(' ');
+		}
+		function pct(k, idx) { return function(r) { return r[k] && r.mx && r.mx[k == 'd' ? 'down' : 'up'] ? P(r[k][idx] / r.mx[k == 'd' ? 'down' : 'up']) : null; }; }
+		var lat = function(i) { return function(r) { return r.l && r.l[i] !== null ? Y(r.l[i]) : null; }; };
+		var pauseRects = '';
+		rows.forEach(function(r) { if (r.p) pauseRects += '<rect x="' + X(r.t).toFixed(1) + '" y="' + T + '" width="' + Math.max(1, (X(r.t + bucket) - X(r.t))).toFixed(1) + '" height="' + (H - B - T) + '" fill="#5bc0de" fill-opacity=".12"/>'; });
+		var loss = '';
+		rows.forEach(function(r) { if (r.l && r.l[4]) loss += '<rect x="' + (X(r.t + bucket / 2) - 1).toFixed(1) + '" y="' + (H - B - 8) + '" width="2" height="8" fill="#ff5c5c"/>'; });
+		var svg = '<svg class="scg-comb" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + g + pauseRects +
+			'<path class="dfill" d="' + area(pct('d', 1)) + '"/><path class="dach" d="' + line(pct('d', 1)) + '"/><path class="dlim" d="' + line(pct('d', 0)) + '"/>' +
+			'<path class="uach" d="' + line(pct('u', 1)) + '"/><path class="ulim" d="' + line(pct('u', 0)) + '"/>' +
+			'<path class="band" d="' + band(lat(3), lat(0)) + '"/>' +
+			'<path class="thr" d="' + line(function(r) { return r.l && r.l[6] !== null ? Y(r.l[6] + thrv) : null; }) + '"/>' +
+			'<path class="lat" d="' + line(lat(1)) + '"/>' + loss +
+			'<line class="cur" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" style="display:none"/></svg>';
+		var leg = '<div class="scg-legend">' +
+			'<span><i style="background:#ff5c5c"></i>' + t('Latency average (ms, left)') + '</span>' +
+			'<span><i style="background:rgba(255,92,92,.4);height:8px"></i>' + t('min to P95') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#9aa4b2 0 2px,transparent 2px 4px)"></i>' + t('Congestion threshold') + '</span>' +
+			'<span><i style="background:#3b8fd9"></i>' + t('Download achieved') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#3b8fd9 0 4px,transparent 4px 6px)"></i>' + t('Download limit') + '</span>' +
+			'<span><i style="background:#e8892b"></i>' + t('Upload achieved') + '</span>' +
+			'<span><i style="background:repeating-linear-gradient(90deg,#e8892b 0 4px,transparent 4px 6px)"></i>' + t('Upload limit') + '</span>' +
+			'<span><i style="background:rgba(91,192,222,.4);height:8px"></i>' + t('Speed test (Autorate paused)') + '</span>' +
+			'<span class="text-muted">' + (bucket == 60 ? t('1 point per minute') : t('1 point per %s minutes', bucket / 60)) + ' &middot; ' +
+			t('Throughput in % of the Autorate maximum (right axis)') + '</span></div>';
+		$('#scg_long').html(head + '<div class="scg-comb-wrap">' + svg + '<div class="scg-comb-tip" style="display:none"></div></div>' + leg + '</div></div>');
+		bindLongSel();
+
+		var wrap = $('#scg_long .scg-comb-wrap'), el = wrap.find('svg'), tip = wrap.find('.scg-comb-tip'), cur = el.find('.cur');
+		function show(frac) {
+			var ts = t0 + (frac * W - L) / (W - L - R) * (t1 - t0), best = null, bd = bucket * 1.5;
+			rows.forEach(function(r) { var dd = Math.abs(r.t + bucket / 2 - ts); if (dd < bd) { bd = dd; best = r; } });
+			if (!best) { tip.hide(); cur.hide(); return; }
+			var x = X(best.t + bucket / 2);
+			var h = '<b>' + hhmm(best.t) + (bucket > 60 ? '&ndash;' + hhmm(best.t + bucket) : '') + '</b>' + (best.p ? ' <small>(' + t('speed test') + ')</small>' : '');
+			if (best.l && best.l[1] !== null) h += '<br>' + t('Latency') + ': <b>' + best.l[1] + ' ms</b> <small>(' + best.l[0] + '&ndash;' + best.l[2] + ', P95 ' + best.l[3] + ')</small>';
+			if (best.l && best.l[4]) h += '<br><span class="scg-hot">' + t('%s lost', best.l[4]) + '</span>';
+			if (best.d) h += '<br>&darr; ' + fmtRate(best.d[1] * 1000) + ' <small>(max ' + fmtRate(best.d[2] * 1000) + ') / Limit ' + fmtRate(best.d[0] * 1000) + '</small>';
+			if (best.u) h += '<br>&uarr; ' + fmtRate(best.u[1] * 1000) + ' <small>(max ' + fmtRate(best.u[2] * 1000) + ') / Limit ' + fmtRate(best.u[0] * 1000) + '</small>';
+			cur.attr({ x1: x, x2: x }).show();
+			tip.html(h).show();
+			var rect = el[0].getBoundingClientRect(), px = x / W * rect.width, tw = tip.outerWidth();
+			tip.css('left', Math.max(0, Math.min(rect.width - tw, px + 12)) + 'px');
+		}
+		el.on('mousemove', function(e) {
+			var rect = this.getBoundingClientRect();
+			longHover = (e.clientX - rect.left) / rect.width;
+			show(longHover);
+		}).on('mouseleave', function() { longHover = null; tip.hide(); cur.hide(); });
+		if (longHover !== null) show(longHover);
+	}
+	function bindLongSel() {
+		$('#scg_longh').on('change', function() { store('longh', this.value); longData = null; fetchLong(); });
 	}
 
 	function renderAutorate(data) {
@@ -730,6 +876,9 @@ events.push(function() {
 		if (!paused) { prev = null; poll(); }
 	});
 	poll();
+	/* Langzeitgraph: eigene Abfrage, neue Minutenwerte gibt es nur einmal pro Minute */
+	fetchLong();
+	setInterval(function() { if (!paused) fetchLong(); }, 60000);
 });
 //]]>
 </script>

@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.4)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.5)
 
 [English](README.md) · Deutsch
 
@@ -72,7 +72,11 @@ Der Autorate-Dienst hält Latenz, Limit und Durchsatz der letzten 5 Minuten
 vor; die Verläufe sind beim Öffnen der Seite sofort vollständig. Ein
 kombinierter Graph (markiert als *Test*) zeigt Latenz und beide Richtungen in
 einem Diagramm: Latenz in ms links, Durchsatz und Limit in % des
-Autorate-Maximums rechts, echte Werte beim Überfahren mit der Maus.
+Autorate-Maximums rechts, echte Werte beim Überfahren mit der Maus. Ein zweiter kombinierter Graph zeigt
+den Verlauf über 1–48 Stunden (wählbar, nur für diesen Graphen) aus
+Minutenwerten, die der Dienst in `/var/db/scg_autorate_history.jsonl`
+speichert (48 h; bei RAM-Disk für /var nach Neustart weg). Speedtest-Zeiten
+sind hinterlegt.
 Die Seite funktioniert mit beliebigen Limitern, auch ohne den Generator.
 
 Für stabile Werte muss `net.inet.ip.dummynet.expire=0` gesetzt sein, sonst

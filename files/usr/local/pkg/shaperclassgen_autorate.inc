@@ -22,7 +22,9 @@ define('SCG_AR_PID', '/var/run/scg_autorate.pid');
 define('SCG_AR_RC', '/usr/local/etc/rc.d/scg_autorate.sh');
 define('SCG_AR_RULES', '/tmp/rules.limiter');
 define('SCG_AR_BASELINE', '/var/db/scg_autorate_baseline.json');
-define('SCG_AR_PAUSE', '/var/run/scg_autorate.pause');   /* Speedtest: Regelung pausiert bis Zeitstempel */
+define('SCG_AR_PAUSE', '/var/run/scg_autorate.pause');
+define('SCG_AR_LONG', '/var/db/scg_autorate_history.jsonl');   /* Minutenwerte fuer den Langzeitgraphen */
+define('SCG_AR_LONG_HOURS', 48);   /* Speedtest: Regelung pausiert bis Zeitstempel */
 
 /* ------------------------------------------------------------------ */
 /* Einstellungen                                                       */
@@ -619,6 +621,64 @@ class SCGAutorate {
 		}
 	}
 
+	/*
+	 * Minutenwert fuer den Langzeitgraphen aus den Sekundenverlaeufen:
+	 * l = [min, Mittel, max, P95, verloren, Proben, Grundlatenz] in ms,
+	 * d/u = [Limit Mittel, erreicht Mittel, erreicht max] in kbit/s, mx = Autorate-Maximum.
+	 */
+	function minuteRecord($m0) {
+		$m1 = $m0 + 60;
+		$avgs = array();
+		$mn = null;
+		$mx = null;
+		$lost = 0;
+		$n = 0;
+		$base = null;
+		foreach ($this->hist as $r) {
+			if ($r[0] < $m0 || $r[0] >= $m1) {
+				continue;
+			}
+			$lost += $r[5];
+			$n += $r[4];
+			if ($r[2] !== null) {
+				$avgs[] = $r[2];
+				$mn = ($mn === null) ? $r[1] : min($mn, $r[1]);
+				$mx = ($mx === null) ? $r[3] : max($mx, $r[3]);
+			}
+			if ($r[6] !== null) {
+				$base = $r[6];
+			}
+		}
+		$rec = array('t' => $m0);
+		if ($avgs || $lost) {
+			$p95 = null;
+			if ($avgs) {
+				$sv = $avgs;
+				sort($sv);
+				$p95 = $sv[(int)floor(0.95 * (count($sv) - 1))];
+			}
+			$rec['l'] = array($mn, $avgs ? round(array_sum($avgs) / count($avgs), 1) : null, $mx, $p95, $lost, $n, $base);
+		}
+		foreach ($this->dirs as $d => $x) {
+			$lim = $ach = array();
+			foreach ($this->rhist[$d] ?? array() as $r) {
+				if ($r[0] >= $m0 && $r[0] < $m1) {
+					$lim[] = $r[1];
+					$ach[] = $r[2];
+				}
+			}
+			if ($lim) {
+				$rec[$d == 'down' ? 'd' : 'u'] = array((int)round(array_sum($lim) / count($lim)),
+					(int)round(array_sum($ach) / count($ach)), max($ach));
+				$rec['mx'][$d] = (int)$x['max'];
+			}
+		}
+		if ($this->paused) {
+			$rec['p'] = 1;
+		}
+		return (count($rec) > 1) ? $rec : null;
+	}
+
 	/* Kennzahlen der letzten 10 s: Mittel, 95-%-Wert, Jitter, Verlust */
 	function stats() {
 		$r = array();
@@ -875,6 +935,110 @@ class SCGAutorate {
 	}
 }
 
+/* Langzeitverlauf auf SCG_AR_LONG_HOURS kuerzen */
+function scg_ar_long_prune() {
+	$lim = time() - SCG_AR_LONG_HOURS * 3600;
+	$keep = array();
+	foreach (scg_ar_long_read($lim) as $r) {
+		$keep[] = json_encode($r);
+	}
+	@file_put_contents(SCG_AR_LONG . '.tmp', $keep ? implode("\n", $keep) . "\n" : '');
+	@rename(SCG_AR_LONG . '.tmp', SCG_AR_LONG);
+}
+
+function scg_ar_long_read($since) {
+	$out = array();
+	$fh = @fopen(SCG_AR_LONG, 'r');
+	if (!$fh) {
+		return $out;
+	}
+	while (($l = fgets($fh)) !== false) {
+		$r = json_decode($l, true);
+		if (is_array($r) && isset($r['t']) && $r['t'] >= $since) {
+			$out[] = $r;
+		}
+	}
+	fclose($fh);
+	return $out;
+}
+
+/*
+ * Verlauf fuer den Graphen: hoechstens ~720 Punkte, laengere Zeitraeume
+ * werden zu Bloecken zusammengefasst (Mittel der Mittel, Min/Max/P95 der Extreme).
+ */
+function scg_ar_long_series($hours) {
+	$hours = max(1, min(SCG_AR_LONG_HOURS, (int)$hours));
+	$rows = scg_ar_long_read(time() - $hours * 3600);
+	$bucket = max(60, (int)(ceil($hours * 60 / 720) * 60));
+	if ($bucket == 60) {
+		return array('bucket' => 60, 'rows' => $rows);
+	}
+	$out = array();
+	$cur = null;
+	$flush = function() use (&$cur, &$out) {
+		if ($cur === null) {
+			return;
+		}
+		$r = array('t' => $cur['t']);
+		if ($cur['la']) {
+			$r['l'] = array(min($cur['lmin']), round(array_sum($cur['la']) / count($cur['la']), 1), max($cur['lmax']),
+				max($cur['lp']), $cur['lost'], $cur['n'], $cur['base']);
+		} elseif ($cur['lost']) {
+			$r['l'] = array(null, null, null, null, $cur['lost'], $cur['n'], $cur['base']);
+		}
+		foreach (array('d', 'u') as $k) {
+			if ($cur[$k]) {
+				$c = count($cur[$k]);
+				$r[$k] = array((int)round(array_sum(array_column($cur[$k], 0)) / $c), (int)round(array_sum(array_column($cur[$k], 1)) / $c),
+					max(array_column($cur[$k], 2)));
+			}
+		}
+		$r['mx'] = $cur['mx'];
+		if ($cur['p']) {
+			$r['p'] = 1;
+		}
+		$out[] = $r;
+		$cur = null;
+	};
+	foreach ($rows as $r) {
+		$b = (int)(floor($r['t'] / $bucket) * $bucket);
+		if ($cur !== null && $cur['t'] != $b) {
+			$flush();
+		}
+		if ($cur === null) {
+			$cur = array('t' => $b, 'la' => array(), 'lmin' => array(), 'lmax' => array(), 'lp' => array(), 'lost' => 0, 'n' => 0,
+				'base' => null, 'd' => array(), 'u' => array(), 'mx' => array(), 'p' => false);
+		}
+		if (isset($r['l'])) {
+			$l = $r['l'];
+			if ($l[1] !== null) {
+				$cur['la'][] = $l[1];
+				$cur['lmin'][] = $l[0];
+				$cur['lmax'][] = $l[2];
+				$cur['lp'][] = $l[3];
+			}
+			$cur['lost'] += $l[4];
+			$cur['n'] += $l[5];
+			if ($l[6] !== null) {
+				$cur['base'] = $l[6];
+			}
+		}
+		foreach (array('d', 'u') as $k) {
+			if (isset($r[$k])) {
+				$cur[$k][] = $r[$k];
+			}
+		}
+		if (isset($r['mx'])) {
+			$cur['mx'] = array_merge($cur['mx'], $r['mx']);
+		}
+		if (!empty($r['p'])) {
+			$cur['p'] = true;
+		}
+	}
+	$flush();
+	return array('bucket' => $bucket, 'rows' => $out);
+}
+
 /* ------------------------------------------------------------------ */
 /* Hauptschleife des Dienstes                                          */
 /* ------------------------------------------------------------------ */
@@ -911,6 +1075,8 @@ function scg_ar_run() {
 	$next_tick = microtime(true) + $tick;
 	$next_resolve = 0;
 	$next_status = 0;
+	$last_minute = null;
+	scg_ar_long_prune();
 	$last_rx_end = null;
 	$stall_end = null;
 	$cfg_mtime = null;
@@ -1012,6 +1178,20 @@ function scg_ar_run() {
 			$next_tick += $tick;
 			if ($next_tick < $now) {
 				$next_tick = $now + $tick;
+			}
+		}
+		/* Langzeitverlauf: jede volle Minute anhaengen, stuendlich auf 48 h kuerzen */
+		$minute = (int)(floor($now / 60) * 60);
+		if ($last_minute === null) {
+			$last_minute = $minute;
+		} elseif ($minute > $last_minute) {
+			$rec = $ar->minuteRecord($last_minute);
+			if ($rec) {
+				@file_put_contents(SCG_AR_LONG, json_encode($rec) . "\n", FILE_APPEND | LOCK_EX);
+			}
+			$last_minute = $minute;
+			if ($minute % 3600 == 0) {
+				scg_ar_long_prune();
 			}
 		}
 		if ($now >= $next_baseline) {
