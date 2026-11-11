@@ -456,6 +456,9 @@ class SCGAutorate {
 	/* Latenzverlauf: je Sekunde min/avg/max/Anzahl/Verluste ueber alle Ziele */
 	public $hist = array();
 	public $histLen = 120;
+	/* Limit/erreicht je Richtung und Sekunde, damit Limiter Live den Verlauf beim Oeffnen sofort zeigt */
+	public $rhist = array();
+	public $rhistLen = 300;
 	public $cur = null;           /* laufende Sekunde */
 	public $samples = array();    /* letzte Rohproben array(t, rtt, delta) fuer Kennzahlen */
 
@@ -596,6 +599,23 @@ class SCGAutorate {
 			$c['n'], $c['lost'], $base ? round(array_sum($base) / count($base), 1) : null);
 		while (count($this->hist) > $this->histLen) {
 			array_shift($this->hist);
+		}
+	}
+
+	/* Limit und erreichten Durchsatz je Sekunde festhalten (letzter Wert der Sekunde zaehlt) */
+	function recordRates($now) {
+		$sec = (int)floor($now);
+		foreach ($this->dirs as $d => $x) {
+			$e = array($sec, (int)round($x['shaper']), (int)round($x['achieved']));
+			$n = count($this->rhist[$d] ?? array());
+			if ($n && $this->rhist[$d][$n - 1][0] == $sec) {
+				$this->rhist[$d][$n - 1] = $e;
+			} else {
+				$this->rhist[$d][] = $e;
+			}
+			while (count($this->rhist[$d]) > $this->rhistLen) {
+				array_shift($this->rhist[$d]);
+			}
 		}
 	}
 
@@ -851,7 +871,7 @@ class SCGAutorate {
 			'window' => "{$n}/" . count($this->window), 'threshold' => floatval($this->cfg['threshold']),
 			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'discarded' => $this->discarded,
 			'source' => $this->source, 'pid' => getmypid(), 'control' => $this->control, 'paused' => $this->paused,
-			'hist' => $this->hist, 'stats' => $this->stats());
+			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats());
 	}
 }
 
@@ -988,6 +1008,7 @@ function scg_ar_run() {
 			foreach ($ar->tick($now, $pipes, $ifbytes) as $num => $kbit) {
 				scg_ar_set_bw($num, $kbit);
 			}
+			$ar->recordRates($now);
 			$next_tick += $tick;
 			if ($next_tick < $now) {
 				$next_tick = $now + $tick;

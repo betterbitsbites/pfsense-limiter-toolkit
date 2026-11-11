@@ -4,7 +4,7 @@
 set -e
 
 NAME="pfSense-pkg-ShaperClassGen"
-VERSION="0.5.2"
+VERSION="0.5.3"
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d /tmp/scgbuild.XXXXXX)
 ROOT="${WORK}/root"

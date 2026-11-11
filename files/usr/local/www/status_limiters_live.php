@@ -364,7 +364,7 @@ events.push(function() {
 		$('#scg_matrix').html(h);
 	}
 
-	/* Autorate: history kept in the browser (last 300 queries) */
+	/* Autorate: history from the service (last 300 s); browser history only as fallback for older services */
 	var arHist = { down: [], up: [], delay: [] };
 	function sparkPath(vals, max, w, h, close) {
 		if (!vals.length || !max) return '';
@@ -467,6 +467,17 @@ events.push(function() {
 			var x = a.dirs[d];
 			if (!x) return;
 			var hist = arHist[d], mx = x.max * 1000;
+			if (a.rhist && a.rhist[d] && a.rhist[d].length) {
+				/* [t, limit kbit, achieved kbit] per second, gaps (service paused) stay as gaps in time */
+				var rh = a.rhist[d], tEnd = rh[rh.length - 1][0];
+				hist = [];
+				var byT = {};
+				rh.forEach(function(v) { byT[v[0]] = v; });
+				for (var tt = tEnd - 299; tt <= tEnd; tt++) {
+					if (byT[tt]) hist.push([byT[tt][1] * 1000, byT[tt][2] * 1000]);
+					else if (hist.length) hist.push(hist[hist.length - 1]);
+				}
+			}
 			h += '<div class="col-md-4"><b>' + (d == 'down' ? '&darr; Download' : '&uarr; Upload') + '</b> <small>' + esc(x.pipe) + '</small><br>' +
 				'Limit <b>' + fmtRate(x.shaper * 1000) + '</b> &middot; ' + t('achieved') + ' ' + fmtRate(x.achieved * 1000) + '<br>' +
 				'<small class="text-muted">' + fmtRate(x.min * 1000) + ' &hellip; ' + fmtRate(x.max * 1000) + ', ' +

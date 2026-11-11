@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.2)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.3)
 
 [English](README.md) · Deutsch
 
@@ -68,6 +68,9 @@ landet in der Config-History (Diagnostics > Backup & Restore > Config History).
 Rate, Anteil an der Limiter-Bandbreite (Balken), Pakete/s, Drops und aktive
 Flows. Gibt es Queues nach dem Schema `D_/U_<Kürzel>_<Klasse>`, erscheint
 oben zusätzlich eine Matrix Interface × Klasse mit Download und Upload.
+Der Autorate-Dienst hält die Latenz der letzten 120 s sowie Limit und
+Durchsatz der letzten 5 Minuten vor; die Verläufe sind beim Öffnen der Seite
+sofort vollständig.
 Die Seite funktioniert mit beliebigen Limitern, auch ohne den Generator.
 
 Für stabile Werte muss `net.inet.ip.dummynet.expire=0` gesetzt sein, sonst
