@@ -16,6 +16,15 @@
 ##|-PRIV
 
 require_once("guiconfig.inc");
+/* Waehrend eines Paket-Updates fehlen die Bibliotheken kurz: ruhig abbrechen statt PHP-Absturzbericht */
+foreach (array('shaperclassgen.inc', 'shaperclassgen_i18n.inc', 'shaperclassgen_autorate.inc', 'shaperclassgen_speedtest.inc') as $scg_f) {
+	if (!is_readable("/usr/local/pkg/{$scg_f}")) {
+		http_response_code(503);
+		header('Retry-After: 10');
+		echo 'ShaperClassGen is being updated, please reload in a few seconds.';
+		exit;
+	}
+}
 require_once("/usr/local/pkg/shaperclassgen.inc");
 require_once("/usr/local/pkg/shaperclassgen_autorate.inc");
 
