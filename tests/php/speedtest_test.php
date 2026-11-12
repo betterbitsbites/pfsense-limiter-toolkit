@@ -1,0 +1,24 @@
+<?php
+/* Speed test with fake curl/ping/route: normal run, failed run, skipped via other default route */
+require __DIR__ . '/_boot.php';
+$W = getenv('SCG_W') ?: __DIR__ . '/../.work';
+require_once("$W/scg_st.inc");
+$s = scg_load_settings();
+$s['speedtest'] = array_merge(scg_st_defaults(), array('enable' => true, 'duration' => 3, 'streams' => 2));
+scg_store_settings($s);
+@unlink(SCG_ST_DB);
+@file_put_contents(SCG_ST_FILE, str_repeat("\0", 25 * 1024 * 1024));
+putenv('FAKE_UP=60e6');
+scg_st_run(false);
+$r = json_decode(file_get_contents(SCG_ST_STATUS), true)['result'];
+check($r['down'] > 0 && $r['up'] > 0 && $r['down_curl'] > 200 && empty($r['failed']), "normal run: {$r['down']} / {$r['up']} Mbit/s (curl {$r['down_curl']} / {$r['up_curl']})");
+putenv('FAKE_FAIL=1');
+scg_st_run(false);
+$r = json_decode(file_get_contents(SCG_ST_STATUS), true)['result'];
+check(!empty($r['failed']) && $r['down'] === null, 'failed run is marked failed, no rate');
+putenv('FAKE_FAIL');
+putenv('FAKE_ROUTEIF=ppp9');
+scg_st_run(false);
+$r = json_decode(file_get_contents(SCG_ST_STATUS), true)['result'];
+check(!empty($r['skipped']), 'other default route: skipped (' . $r['skipped'] . ')');
+check(count(scg_st_results(0)) == 3, 'three results stored');

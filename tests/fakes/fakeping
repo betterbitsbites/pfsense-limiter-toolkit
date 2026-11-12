@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+import sys, time, random, os
+a=sys.argv[1:]; c=int(a[a.index('-c')+1]); iv=float(a[a.index('-i')+1]); base=float(os.environ.get('FAKE_RTT','12'))
+r=0
+for i in range(c):
+    if random.random()>0.02:
+        print("64 bytes from 1.1.1.1: icmp_seq=%d ttl=57 time=%.3f ms"%(i, base+random.random()*8)); r+=1
+    sys.stdout.flush(); time.sleep(iv)
+print("\n--- 1.1.1.1 ping statistics ---\n%d packets transmitted, %d packets received"%(c,r))

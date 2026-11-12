@@ -1,0 +1,12 @@
+00001: 500.000 Kbit/s    0 ms burst 0 
+q131073  50 sl. 0 flows (1 buckets) sched 65537 weight 0 lmax 0 pri 0 droptail
+ sched 65537 type FIFO flags 0x0 0 buckets 0 active
+00002: 500.000 Kbit/s    0 ms burst 0 
+q131074  50 sl. 0 flows (1 buckets) sched 65538 weight 0 lmax 0 pri 0 droptail
+ sched 65538 type FIFO flags 0x0 0 buckets 0 active
+00003: 950.000 Mbit/s    0 ms burst 0 
+q131075  50 sl. 0 flows (1 buckets) sched 65539 weight 0 lmax 0 pri 0 droptail
+ sched 65539 type FIFO flags 0x0 0 buckets 0 active
+00004:  47.000 Mbit/s    0 ms burst 0 
+q131076  50 sl. 0 flows (1 buckets) sched 65540 weight 0 lmax 0 pri 0 droptail
+ sched 65540 type FIFO flags 0x0 0 buckets 0 active

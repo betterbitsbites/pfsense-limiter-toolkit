@@ -1,0 +1,20 @@
+#!/bin/sh
+# Fake dnctl: simulates growing counters (t = 1..3 s) for 56 child queues
+D=$(dirname "$0")
+T=$(( $(date +%s) % 3 + 1 ))
+case "$1" in
+queue)
+  i=1; while [ $i -le 56 ]; do
+    case $i in
+      5) B=$((T*60000000/8)); F=1;;   # LAN qDefault ~60 Mbit/s
+      9) B=$((T*400000000/8)); F=1;;  # GUEST qGames ~400 Mbit/s
+      26) B=$((T*20000000/8)); F=1;;  # DMZ qDefault ~20 Mbit/s
+      33) B=$((T*5000000/8)); F=1;;   # U_LAN qDefault ~5 Mbit/s
+      *) B=0; F=0;;
+    esac
+    printf "q%05d  50 sl. %d flows (1 buckets) sched %d weight %d lmax 0 pri 0  AQM CoDel target 5ms interval 100ms NoECN\n" $i $F $([ $i -le 28 ] && echo 3 || echo 4) $(( (i*37)%100+1 ))
+    if [ $F = 1 ]; then echo "BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp"; echo "  0 ip           0.0.0.0/0             0.0.0.0/0     $((B/1400)) $B  0    0   $((T%7))"; fi
+    i=$((i+1)); done;;
+sched) P=$((T*40000)); B=$((T*60000000)); sed "s/15436946 21391523355/$P $B/" "$D/dn/sched.txt";;
+pipe) cat "$D/dn/pipe.txt";;
+esac

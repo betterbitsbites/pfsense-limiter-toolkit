@@ -1,0 +1,17 @@
+00001: 500.000 Kbit/s    0 ms burst 0 
+q65537  50 sl. 0 flows (1 buckets) sched 1 weight 0 lmax 0 pri 0 droptail
+ sched 1 type FQ_CODEL flags 0x0 0 buckets 0 active
+ FQ_CODEL target 1us interval 1us quantum 1514 limit 10240 flows 1024 NoECN
+00002: 500.000 Kbit/s    0 ms burst 0 
+q65538  50 sl. 0 flows (1 buckets) sched 2 weight 0 lmax 0 pri 0 droptail
+ sched 2 type FQ_CODEL flags 0x0 0 buckets 0 active
+ FQ_CODEL target 5ms interval 100ms quantum 1514 limit 10240 flows 1024 NoECN
+00003: 950.000 Mbit/s    0 ms burst 0 
+ sched 3 type WF2Q+ flags 0x0 0 buckets 1 active
+   Children flowsets: 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 
+BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp
+  0 ip           0.0.0.0/0             0.0.0.0/0     15436946 21391523355  0    0 721
+00004:  47.000 Mbit/s    0 ms burst 0 
+ sched 4 type WF2Q+ flags 0x0 0 buckets 1 active
+   Children flowsets: 56 55 54 53 52 51 50 49 48 47 46 45 44 43 42 41 40 39 38 37 36 35 34 33 32 31 30 29 
+  0 ip           0.0.0.0/0             0.0.0.0/0     4951267 267259629  0    0   0

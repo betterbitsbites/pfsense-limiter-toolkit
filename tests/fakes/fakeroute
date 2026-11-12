@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "   route to: default"
+echo "  interface: ${FAKE_ROUTEIF:-igb0}"
