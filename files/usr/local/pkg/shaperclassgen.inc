@@ -23,7 +23,7 @@ require_once("shaper.inc");
 require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
-define('SCG_VERSION', '0.5.8');
+define('SCG_VERSION', '0.5.9');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
@@ -962,6 +962,50 @@ function scg_strip(&$pipes, &$rules, &$oldnums) {
 	$rules = $keep;
 }
 
+/*
+ * Identity of a generated rule: the fields that define what it matches and
+ * where it sends traffic. Fields pfSense adds or changes on its own (tracker,
+ * created, updated, id, disabled ...) are left out.
+ */
+function scg_rule_identity($r) {
+	$keys = array('type', 'interface', 'ipprotocol', 'protocol', 'icmptype', 'direction',
+		'floating', 'source', 'destination', 'dnpipe', 'pdnpipe', 'descr');
+	$f = array();
+	foreach ($keys as $k) {
+		if (isset($r[$k])) {
+			$f[$k] = scg_normalize_value($r[$k]);
+		}
+	}
+	return md5(json_encode($f));
+}
+
+/* Arrays sorted by key and all scalars as strings, as read back from config.xml */
+function scg_normalize_value($v) {
+	if (is_array($v)) {
+		ksort($v);
+		foreach ($v as $k => $x) {
+			$v[$k] = scg_normalize_value($x);
+		}
+		return $v;
+	}
+	return (string)$v;
+}
+
+/* Trackers of the currently generated rules, grouped by rule identity */
+function scg_generated_rule_trackers($rules) {
+	$out = array();
+	foreach ($rules as $r) {
+		if (!is_array($r) || !scg_is_generated_rule($r) || !isset($r['tracker']) || $r['tracker'] === '') {
+			continue;
+		}
+		$out[scg_rule_identity($r)][] = array(
+			'tracker' => (string)$r['tracker'],
+			'created' => (isset($r['created']) && is_array($r['created'])) ? $r['created'] : null,
+		);
+	}
+	return $out;
+}
+
 /* Anzahl generierter Floating-Regeln am Anfang der Floating-Liste */
 function scg_leading_generated_floating($rules) {
 	$n = 0;
@@ -1106,6 +1150,7 @@ function scg_apply($s, &$errors, &$msgs) {
 		$rules = array();
 	}
 	$oldoff = scg_current_sep_offset($rules);
+	$oldtrackers = scg_generated_rule_trackers($rules);
 	$oldnums = array();
 	scg_strip($pipes, $rules, $oldnums);
 
@@ -1195,14 +1240,41 @@ function scg_apply($s, &$errors, &$msgs) {
 	if (isset($_SESSION['Username'])) {
 		$user = $_SESSION['Username'] . '@ShaperClassGen';
 	}
+	/* trackers of the previous generated rules are never handed to a different rule */
+	$retired = array();
+	foreach ($oldtrackers as $list) {
+		foreach ($list as $o) {
+			$retired[$o['tracker']] = true;
+		}
+	}
 	$new = array();
 	foreach ($plan['rules'] as $r) {
-		while (isset($trackers[$t])) {
-			$t++;
+		/*
+		 * Unchanged rules keep their tracker and creation time, so tools that
+		 * identify rules by tracker (rule statistics, Home Assistant switches)
+		 * don't see a new rule on every apply.
+		 */
+		$id = scg_rule_identity($r);
+		$old = null;
+		while (!empty($oldtrackers[$id])) {
+			$cand = array_shift($oldtrackers[$id]);
+			if (!isset($trackers[$cand['tracker']])) {
+				$old = $cand;
+				break;
+			}
 		}
-		$trackers[$t] = true;
-		$r['tracker'] = (string)$t;
-		$r['created'] = array('time' => $now, 'username' => $user);
+		if ($old !== null) {
+			$trackers[$old['tracker']] = true;
+			$r['tracker'] = $old['tracker'];
+			$r['created'] = $old['created'] ?: array('time' => $now, 'username' => $user);
+		} else {
+			while (isset($trackers[$t]) || isset($retired[$t])) {
+				$t++;
+			}
+			$trackers[$t] = true;
+			$r['tracker'] = (string)$t;
+			$r['created'] = array('time' => $now, 'username' => $user);
+		}
 		$new[] = $r;
 	}
 	/*
@@ -1311,6 +1383,7 @@ function scg_remove_all(&$msgs) {
 	}
 	$before = count($rules);
 	$oldoff = scg_current_sep_offset($rules);
+	$oldtrackers = scg_generated_rule_trackers($rules);
 	$oldnums = array();
 	scg_strip($pipes, $rules, $oldnums);
 	$nrules = $before - count($rules);

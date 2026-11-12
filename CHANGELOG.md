@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.9
+- Generated rules keep their tracker ID and creation time when the classes
+  are applied again, as long as the rule itself is unchanged. Before, every
+  apply gave all generated rules new tracker IDs, so tools that identify
+  rules by tracker (e.g. the Home Assistant pfSense integration, which
+  creates a switch per rule) saw new rules each time. Changed rules get a
+  new tracker that was never used by a previous rule.
+
 ## 0.5.8
 - Speedtest: manual test can run *exclusive*. All limiters are throttled to
   8 kbit/s for the duration of the test and restored afterwards (also on
