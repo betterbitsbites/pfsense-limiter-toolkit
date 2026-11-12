@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.7)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.8)
 
 [English](README.md) · Deutsch
 
@@ -137,6 +137,11 @@ und Kennzahlen der letzten 10 s (Mittel, P95, Jitter, Verlust).
   zeigt Bufferbloat der Leitung.
 - Läuft nur, wenn die Standardroute über das gewählte WAN geht; über eine
   Backup-Leitung (LTE/5G) wird der Test übersprungen und markiert.
+- Ein manueller Test kann **exklusiv** laufen: Alle Limiter werden für etwa
+  30 s auf wenige kbit/s gedrosselt, der Test hat die Leitung für sich.
+  Laufende Downloads und Gespräche stocken oder brechen ab; Verkehr, der
+  nicht durch Limiter läuft, ist nicht betroffen. Geplante Tests laufen nie
+  exklusiv.
 - Autorate pausiert während des Tests (Limiter bleiben, nichts wird gelernt,
   Latenz wird weiter aufgezeichnet). Die Pause endet spätestens nach
   2 × Dauer + 30 s von selbst.

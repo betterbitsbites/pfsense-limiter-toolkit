@@ -24,7 +24,10 @@ define('SCG_AR_RULES', '/tmp/rules.limiter');
 define('SCG_AR_BASELINE', '/var/db/scg_autorate_baseline.json');
 define('SCG_AR_PAUSE', '/var/run/scg_autorate.pause');
 define('SCG_AR_LONG', '/var/db/scg_autorate_history.jsonl');   /* Minutenwerte fuer den Langzeitgraphen */
-define('SCG_AR_LONG_HOURS', 48);   /* Speedtest: Regelung pausiert bis Zeitstempel */
+define('SCG_AR_LONG_HOURS', 48);
+/* Exklusiver Speedtest: urspruengliche Limiter-Bandbreiten waehrend des Tests */
+define('SCG_ST_SQUEEZE', '/var/run/scg_speedtest_squeeze.json');
+define('SCG_ST_SQUEEZE_KBIT', 8);   /* Speedtest: Regelung pausiert bis Zeitstempel */
 
 /* ------------------------------------------------------------------ */
 /* Einstellungen                                                       */
@@ -210,6 +213,43 @@ function scg_ar_set_bw($num, $kbit) {
 	}
 	exec('/sbin/dnctl ' . scg_ar_dnctl_args($line) . ' 2>&1', $o, $rc);
 	return $rc == 0;
+}
+
+/*
+ * Exklusiver Speedtest: alle Limiter auf wenige kbit/s drosseln, damit der
+ * Test die Leitung fuer sich hat. Die laufenden Bandbreiten werden vorher
+ * gesichert. Wirkt sofort auch auf bestehende Verbindungen; Verkehr, der
+ * nicht durch Limiter laeuft, ist nicht betroffen.
+ */
+function scg_st_squeeze($until) {
+	$o = array();
+	exec('/sbin/dnctl pipe show 2>/dev/null', $o);
+	$save = array();
+	foreach (scg_dn_parse_pipes($o) as $num => $p) {
+		if ($p['bw'] > 0) {
+			$save[$num] = (int)round($p['bw'] / 1000);
+		}
+	}
+	if (!$save) {
+		return 0;
+	}
+	@file_put_contents(SCG_ST_SQUEEZE, json_encode(array('until' => (int)$until, 'pipes' => $save)));
+	foreach ($save as $num => $kbit) {
+		scg_ar_set_bw($num, SCG_ST_SQUEEZE_KBIT);
+	}
+	return count($save);
+}
+
+/* Gedrosselte Limiter zuruecksetzen (nach dem Test, beim Abbruch oder durch den Dienst nach Ablauf) */
+function scg_st_unsqueeze() {
+	$j = json_decode((string)@file_get_contents(SCG_ST_SQUEEZE), true);
+	if (!is_array($j)) {
+		return;
+	}
+	foreach ((array)($j['pipes'] ?? array()) as $num => $kbit) {
+		scg_ar_set_bw((int)$num, (int)$kbit);
+	}
+	@unlink(SCG_ST_SQUEEZE);
 }
 
 /* Stellt die konfigurierte Bandbreite der verwalteten Limiter wieder her */
@@ -1145,6 +1185,13 @@ function scg_ar_run() {
 			clearstatcache(true, SCG_AR_PAUSE);
 			$pz = file_exists(SCG_AR_PAUSE) ? intval(@file_get_contents(SCG_AR_PAUSE)) : 0;
 			$ar->paused = ($pz > time());
+			/* Sicherheitsnetz: gedrosselte Limiter eines abgebrochenen exklusiven Tests zuruecksetzen */
+			if (!$ar->paused && file_exists(SCG_ST_SQUEEZE)) {
+				$sq = json_decode((string)@file_get_contents(SCG_ST_SQUEEZE), true);
+				if (!is_array($sq) || ($sq['until'] ?? 0) < time()) {
+					scg_st_unsqueeze();
+				}
+			}
 			$out = array();
 			exec('/sbin/dnctl sched show 2>/dev/null', $out);
 			$sched = scg_dn_parse_pipes($out);

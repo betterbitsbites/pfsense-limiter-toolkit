@@ -343,13 +343,19 @@ function scg_st_resume_autorate() {
 /*
  * Run one complete test and store the result. $manual = started from the GUI.
  */
-function scg_st_run($manual = false) {
+function scg_st_run($manual = false, $exclusive = false) {
 	$a = scg_st_settings();
 	$fh = fopen(SCG_ST_LOCK, 'c');
 	if (!$fh || !flock($fh, LOCK_EX | LOCK_NB)) {
 		return 1;
 	}
+	/* Reste eines abgebrochenen exklusiven Tests zuerst aufraeumen */
+	scg_st_unsqueeze();
+	$exclusive = $manual && $exclusive;
 	$r = array('t' => time(), 'manual' => $manual);
+	if ($exclusive) {
+		$r['exclusive'] = true;
+	}
 	$wan = scg_ar_wan($a);
 	$real = $wan ? $wan[1] : null;
 	$r['iface'] = $wan ? $wan[2] : null;
@@ -367,10 +373,16 @@ function scg_st_run($manual = false) {
 	$dur = intval($a['duration']);
 	scg_st_status('prepare');
 	scg_st_prepare_file($a);
-	if (!empty($a['pause_autorate'])) {
+	if (!empty($a['pause_autorate']) || $exclusive) {
 		scg_st_pause_autorate(time() + 2 * $dur + 30);
 		/* resume even if the run aborts */
 		register_shutdown_function('scg_st_resume_autorate');
+	}
+	if ($exclusive) {
+		/* All limiters down to a few kbit/s for the test; restored afterwards, on abort, or by the Autorate service when the pause expires */
+		register_shutdown_function('scg_st_unsqueeze');
+		$r['squeezed'] = scg_st_squeeze(time() + 2 * $dur + 30);
+		usleep(1500000);   /* let queues drain */
 	}
 	$c0 = scg_if_bytes($real);
 
@@ -391,7 +403,10 @@ function scg_st_run($manual = false) {
 	$u = scg_st_transfer('up', $a, $real);
 	$r['ping_up'] = scg_st_ping_collect($ph, $n);
 
-	if (!empty($a['pause_autorate'])) {
+	if ($exclusive) {
+		scg_st_unsqueeze();
+	}
+	if (!empty($a['pause_autorate']) || $exclusive) {
 		scg_st_resume_autorate();
 	}
 	$r['down'] = $d['mbps'];

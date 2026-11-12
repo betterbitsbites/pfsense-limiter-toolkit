@@ -412,7 +412,11 @@ function scg_dict_de() {
 		'Network control traffic (DNS, ICMP, NTP); formerly qACK. True TCP ACK separation is not possible with limiters.' => 'Netz-Steuerverkehr (DNS, ICMP, NTP); früher qACK. Echte TCP-ACK-Trennung ist mit Limitern nicht möglich.',
 		'Steam games (Valve servers, SDR, P2P, voice)' => 'Steam-Spiele (Valve-Server, SDR, P2P, Sprache)',
 		'Minecraft (Java and Bedrock)' => 'Minecraft (Java und Bedrock)',
-		'Minecraft (Java + Bedrock)' => 'Minecraft (Java + Bedrock)'
+		'Minecraft (Java + Bedrock)' => 'Minecraft (Java + Bedrock)',
+		'For about 30 seconds all limiters are throttled to a few kbit/s, so the test has the line to itself. Running downloads and calls pause or may drop. Traffic that does not pass a limiter (pfSense itself, VPN tunnels started on pfSense, interfaces without limiter) is not affected. Only for manual tests.' => 'Für etwa 30 Sekunden werden alle Limiter auf wenige kbit/s gedrosselt, damit der Test die Leitung für sich hat. Laufende Downloads und Gespräche stocken oder brechen ab. Verkehr, der nicht durch Limiter läuft (pfSense selbst, auf der pfSense gestartete VPN-Tunnel, Interfaces ohne Limiter), ist nicht betroffen. Nur für manuelle Tests.',
+		'Exclusive (pause all shaped traffic)' => 'Exklusiv (gesamten geshapten Verkehr anhalten)',
+		'manual, exclusive' => 'manuell, exklusiv',
+		'Exclusive test: for about 30 seconds all traffic through the limiters is paused. Running downloads and calls may drop. Continue?' => 'Exklusiver Test: Für etwa 30 Sekunden wird der gesamte Verkehr durch die Limiter angehalten. Laufende Downloads und Gespräche können abbrechen. Fortfahren?'
 	);
 	return $d;
 }

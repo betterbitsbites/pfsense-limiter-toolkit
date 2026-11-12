@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.8
+- Speedtest: manual test can run *exclusive*. All limiters are throttled to
+  8 kbit/s for the duration of the test and restored afterwards (also on
+  abort, and by the Autorate service once the pause has expired), so the test
+  measures the full line. Scheduled tests are never exclusive.
+
 ## 0.5.7
 - Limiter Live: priorities, shaped interfaces and limiter assignment are
   refreshed with every live query. The matrix marks interfaces whose running

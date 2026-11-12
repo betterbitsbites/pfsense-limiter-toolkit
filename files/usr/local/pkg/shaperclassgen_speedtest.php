@@ -17,7 +17,7 @@ $cmd = $argv[1] ?? 'run';
 
 switch ($cmd) {
 	case 'manual':
-		exit(scg_st_run(true));
+		exit(scg_st_run(true, ($argv[2] ?? '') === 'exclusive'));
 	default:
 		$a = scg_st_settings();
 		if (empty($a['enable'])) {

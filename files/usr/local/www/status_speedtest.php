@@ -57,7 +57,7 @@ if ($_POST) {
 			$msgs[] = scg_t('A speed test is already running.');
 		} else {
 			@unlink(SCG_ST_STATUS);
-			mwexec_bg('/usr/local/bin/php -f ' . SCG_ST_SCRIPT . ' manual');
+			mwexec_bg('/usr/local/bin/php -f ' . SCG_ST_SCRIPT . ' manual' . (!empty($_POST['exclusive']) ? ' exclusive' : ''));
 			$msgs[] = scg_t('Speed test started. The result appears below when it is finished.');
 		}
 	} elseif ($act == 'clear') {
@@ -144,6 +144,7 @@ scg_tabs('speedtest');
 			<label><input type="checkbox" id="scg_showcurl"> <?=scg_t('Show curl rate too')?></label>
 			&nbsp;
 			<input type="hidden" name="act" value="run">
+			<label title="<?=h(scg_t('For about 30 seconds all limiters are throttled to a few kbit/s, so the test has the line to itself. Running downloads and calls pause or may drop. Traffic that does not pass a limiter (pfSense itself, VPN tunnels started on pfSense, interfaces without limiter) is not affected. Only for manual tests.'))?>"><input type="checkbox" name="exclusive" value="1"> <?=scg_t('Exclusive (pause all shaped traffic)')?></label>
 			<button type="submit" class="btn btn-sm btn-primary" id="scg_run"><i class="fa-solid fa-gauge-high"></i> <?=scg_t('Run test now')?></button>
 			<span id="scg_runstate" class="text-muted" style="margin-left:10px"></span>
 		</form>
@@ -327,7 +328,7 @@ events.push(function() {
 	}
 
 	function tipHtml(r) {
-		var s = '<b>' + esc(fmtTime(r.t, true)) + '</b>' + (r.manual ? ' (' + t('manual') + ')' : '');
+		var s = '<b>' + esc(fmtTime(r.t, true)) + '</b>' + (r.manual ? ' (' + (r.exclusive ? t('manual, exclusive') : t('manual')) + ')' : '');
 		if (r.skipped) return s + '<br>' + t('skipped') + ': ' + esc(r.skipped);
 		if (r.failed) return s + '<br>' + t('failed') + (r.errors ? ': ' + esc(r.errors.join(', ')) : '');
 		s += '<br>Download: <b>' + num(r.down, 1) + '</b> Mbit/s &middot; Upload: <b>' + num(r.up, 1) + '</b> Mbit/s';
@@ -411,7 +412,7 @@ events.push(function() {
 			'<th class="scg-num">' + t('Loss') + '</th><th>Server</th><th class="scg-num">' + t('Data') + '</th><th></th></tr></thead><tbody>';
 		last.forEach(function(r) {
 			var note = r.skipped ? t('skipped') + ': ' + esc(r.skipped) : (r.failed ? t('failed') : '') + (r.errors ? ' ' + esc(r.errors.join(', ')) : '');
-			if (r.manual) note = t('manual') + (note ? ' &middot; ' + note : '');
+			if (r.manual) note = (r.exclusive ? t('manual, exclusive') : t('manual')) + (note ? ' &middot; ' + note : '');
 			var loss = r.ping_down && r.ping_up ? Math.max(r.ping_down.loss || 0, r.ping_up.loss || 0, r.ping ? r.ping.loss || 0 : 0) : null;
 			var bad = function(p) { return p && r.ping && r.ping.avg !== null && p.avg !== null && p.avg > r.ping.avg + 30; };
 			tb += '<tr' + (r.skipped || r.failed ? ' class="text-muted"' : '') + '><td>' + esc(fmtTime(r.t, true)) + '</td>' +
@@ -470,6 +471,12 @@ events.push(function() {
 	if (rg && $('#scg_range option[value="' + rg + '"]').length) $('#scg_range').val(rg);
 	$('#scg_showcurl').prop('checked', load('curl') === '1');
 	$('#scg_range').on('change', function() { store('range', this.value); fetchData(); });
+	$('#scg_run').closest('form').on('submit', function() {
+		if ($(this).find('[name=exclusive]').prop('checked')) {
+			return confirm(t('Exclusive test: for about 30 seconds all traffic through the limiters is paused. Running downloads and calls may drop. Continue?'));
+		}
+		return true;
+	});
 	$('#scg_showcurl').on('change', function() { store('curl', this.checked ? '1' : '0'); render(); });
 	fetchData();
 	poll();

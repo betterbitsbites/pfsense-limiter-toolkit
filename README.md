@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.7) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.8) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -159,6 +159,10 @@ Status > Speedtest measures the raw line from pfSense itself, by default every
 - Runs only if the default route goes through the selected WAN; via a backup
   line (LTE/5G) the test is skipped and marked.
 - Autorate pauses during the test.
+- A manual test can run **exclusive**: all limiters are throttled to a few
+  kbit/s for about 30 s, so the test has the line to itself. Running
+  downloads and calls pause or may drop; traffic that does not pass a limiter
+  is not affected. Scheduled tests are never exclusive.
 - Graphs for 24 h to 1 year, table of the latest results and an estimate of the
   data volume. **Mind the volume**: at about 1 Gbit/s and every 30 minutes, it
   is about 1 GB per test and well over 1 TB per month.
