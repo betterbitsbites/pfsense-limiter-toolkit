@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.6)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.7)
 
 [English](README.md) · Deutsch
 
@@ -67,7 +67,9 @@ landet in der Config-History (Diagnostics > Backup & Restore > Config History).
 **Status > Limiter Live** zeigt alle Limiter und ihre Child-Queues live:
 Rate, Anteil an der Limiter-Bandbreite (Balken), Pakete/s, Drops und aktive
 Flows. Gibt es Queues nach dem Schema `D_/U_<Kürzel>_<Klasse>`, erscheint
-oben zusätzlich eine Matrix Interface × Klasse mit Download und Upload.
+oben zusätzlich eine Matrix Interface × Klasse mit Download und Upload. Die
+Priorität darin wird live aktualisiert; „nicht übernommen“ zeigt an, dass
+gespeicherte Prioritäten oder Gewichte noch nicht erzeugt wurden.
 Der Autorate-Dienst hält Latenz, Limit und Durchsatz der letzten 5 Minuten
 vor; die Verläufe sind beim Öffnen der Seite sofort vollständig. Ein
 kombinierter Graph (markiert als *Test*) zeigt Latenz und beide Richtungen in

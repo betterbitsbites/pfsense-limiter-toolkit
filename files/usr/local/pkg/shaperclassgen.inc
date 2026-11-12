@@ -23,7 +23,7 @@ require_once("shaper.inc");
 require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
-define('SCG_VERSION', '0.5.6');
+define('SCG_VERSION', '0.5.7');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */

@@ -28,12 +28,52 @@ foreach (array('shaperclassgen.inc', 'shaperclassgen_i18n.inc', 'shaperclassgen_
 require_once("/usr/local/pkg/shaperclassgen.inc");
 require_once("/usr/local/pkg/shaperclassgen_autorate.inc");
 
+/*
+ * Konfigurationsabhaengige Werte der Seite. Werden bei jeder Abfrage mitgeschickt,
+ * damit Prioritaeten, Zuordnungen und Limiter ohne Neuladen aktuell bleiben.
+ * ew = erwartetes Queue-Gewicht je Tag und Klasse (Klassengewicht x Faktor), um
+ * gespeicherte, aber noch nicht erzeugte Aenderungen zu erkennen.
+ */
+function scg_live_cfg() {
+	$c = array('factors' => array(), 'shaped' => array(), 'down' => array(), 'up' => array(), 'ew' => array(), 'lang' => scg_lang());
+	$set = scg_load_settings();
+	$classes = scg_classes($set);
+	foreach ((array)($set['vlans'] ?? array()) as $v) {
+		if (empty($v['enable']) || empty($v['tag'])) {
+			continue;
+		}
+		$f = floatval($v['factor']);
+		$c['factors'][$v['tag']] = $f;
+		$c['shaped'][$v['if']] = $v['tag'];
+		if (!empty($v['down'])) {
+			$c['down'][$v['down']] = true;
+		}
+		if (!empty($v['up'])) {
+			$c['up'][$v['up']] = true;
+		}
+		foreach ($classes as $cls => $d) {
+			$w = (int)round(intval($set['classes'][$cls]['weight'] ?? $d['weight']) * $f);
+			$c['ew'][$v['tag']][$cls] = max(1, min(100, $w));
+		}
+	}
+	foreach (array('down', 'up') as $d) {
+		if (!empty($set['autorate'][$d]['pipe'])) {
+			$c[$d][$set['autorate'][$d]['pipe']] = true;
+		}
+	}
+	foreach (array('factors', 'shaped', 'down', 'up', 'ew') as $k) {
+		$c[$k] = (object)$c[$k];
+	}
+	return $c;
+}
+
 if (isset($_GET['getstats'])) {
 	header("Content-Type: application/json");
 	header("Cache-Control: no-store");
 	$snap = scg_dn_snapshot();
 	$snap['autorate'] = scg_ar_status();
 	$snap['ifaces'] = scg_if_counters();
+	$snap['cfg'] = scg_live_cfg();
 	echo json_encode($snap);
 	exit;
 }
@@ -60,29 +100,7 @@ $expire = scg_dn_expire();
 $pgtitle = array(gettext("Status"), "Limiter Live");
 $shortcut_section = "trafficshaper-limiters";
 
-/* Priority factors (tag -> factor), shaped interfaces and limiters per direction */
-$scg_factors = array();
-$scg_shaped = array();
-$scg_downpipes = array();
-$scg_uppipes = array();
-$scg_set = scg_load_settings();
-foreach ((array)($scg_set['vlans'] ?? array()) as $v) {
-	if (!empty($v['enable']) && !empty($v['tag'])) {
-		$scg_factors[$v['tag']] = floatval($v['factor']);
-		$scg_shaped[$v['if']] = $v['tag'];
-		if (!empty($v['down'])) {
-			$scg_downpipes[$v['down']] = true;
-		}
-		if (!empty($v['up'])) {
-			$scg_uppipes[$v['up']] = true;
-		}
-	}
-}
-foreach (array('down' => 'scg_downpipes', 'up' => 'scg_uppipes') as $d => $var) {
-	if (!empty($scg_set['autorate'][$d]['pipe'])) {
-		${$var}[$scg_set['autorate'][$d]['pipe']] = true;
-	}
-}
+$scg_cfg = scg_live_cfg();
 
 include("head.inc");
 
@@ -180,6 +198,7 @@ if ($expire !== null && $expire !== 0) {
 	</div>
 </div>
 
+<div id="scg_cfghint"></div>
 <div id="scg_combined"></div>
 <div id="scg_long"></div>
 <div id="scg_latency"></div>
@@ -216,10 +235,16 @@ events.push(function() {
 	$('#scg_hideidle, #scg_idleifs, #scg_showvpn').on('change', function() { store(this.id.replace('scg_', ''), this.checked ? '1' : '0'); });
 
 	var CLASS_ORDER = ['qControl', 'qACK', 'qRealtime', 'qVoIP', 'qGames', 'qInteractive', 'qOthersHigh', 'qDefault', 'qOthersLow', 'qBulk', 'qP2P'];
-	var FACTORS = <?=json_encode((object)$scg_factors)?>;
-	var SHAPED = <?=json_encode((object)$scg_shaped)?>;
-	var DOWNPIPES = <?=json_encode((object)$scg_downpipes)?>;
-	var UPPIPES = <?=json_encode((object)$scg_uppipes)?>;
+	var CFG = <?=json_encode($scg_cfg)?>;
+	var FACTORS = CFG.factors, SHAPED = CFG.shaped, DOWNPIPES = CFG.down, UPPIPES = CFG.up, EW = CFG.ew;
+	var LANG_AT_LOAD = CFG.lang;
+	/* Konfiguration aus jeder Abfrage uebernehmen; nur ein Sprachwechsel braucht Neuladen */
+	function applyCfg(c) {
+		if (!c) return;
+		FACTORS = c.factors; SHAPED = c.shaped; DOWNPIPES = c.down; UPPIPES = c.up; EW = c.ew;
+		$('#scg_cfghint').html(c.lang !== LANG_AT_LOAD ? '<div class="alert alert-info" style="margin-bottom:10px">' +
+			t('The language setting changed. Reload the page to switch the texts.') + '</div>' : '');
+	}
 
 	/* Queues by weight descending, ties in configuration order */
 	function byWeight(list) {
@@ -359,6 +384,7 @@ events.push(function() {
 				rows[m[2]] = rows[m[2]] || {};
 				rows[m[2]][m[3]] = rows[m[2]][m[3]] || {};
 				rows[m[2]][m[3]][m[1]] = q.rate;
+				rows[m[2]][m[3]]['w' + m[1]] = q.weight;
 				cols[m[3]] = true;
 			});
 		});
@@ -385,7 +411,18 @@ events.push(function() {
 			return (fb - fa) || a.localeCompare(b);
 		}).forEach(function(tag) {
 			var sd = 0, su = 0;
-			h += '<tr><td><b>' + esc(tag) + '</b></td><td>' + (FACTORS[tag] !== undefined ? FACTORS[tag].toFixed(2) : '–') + '</td>';
+			/* Gespeicherte Prioritaet; Hinweis, wenn die laufenden Queue-Gewichte noch nicht dazu passen */
+			var pc = FACTORS[tag] !== undefined ? FACTORS[tag].toFixed(2) : '–';
+			if (FACTORS[tag] === undefined) {
+				pc += ' <span class="label label-default" title="' + esc(t('These queues exist, but the interface is not enabled in the Class Generator.')) + '">' + t('not in settings') + '</span>';
+			} else if (EW[tag]) {
+				var stale = Object.keys(rows[tag]).some(function(c) {
+					var e = EW[tag][c], cell = rows[tag][c];
+					return e !== undefined && ((cell.wD !== undefined && cell.wD != e) || (cell.wU !== undefined && cell.wU != e));
+				});
+				if (stale) pc += ' <span class="label label-warning" title="' + esc(t('The saved priority or class weights differ from the running queues. Click "Generate / Update" in the Class Generator to apply them.')) + '">' + t('not applied') + '</span>';
+			}
+			h += '<tr><td><b>' + esc(tag) + '</b></td><td>' + pc + '</td>';
 			cl.forEach(function(c) {
 				var cell = rows[tag][c] || {};
 				var d = cell.D, u = cell.U;
@@ -859,6 +896,7 @@ events.push(function() {
 		if (paused) return;
 		$.ajax({ url: 'status_limiters_live.php', data: { getstats: 1 }, dataType: 'json', cache: false })
 			.done(function(data) {
+				applyCfg(data.cfg);
 				compute(data);
 				renderAll(data);
 				prev = data;
