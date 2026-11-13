@@ -194,6 +194,10 @@ if ($expire !== null && $expire !== 0) {
 			</label>
 			&nbsp;
 			<label><input type="checkbox" id="scg_hideidle"> <?=scg_t('Hide idle queues')?></label>
+			<select class="form-control input-sm" id="scg_idlemode" title="<?=htmlspecialchars(scg_t('When a queue counts as idle. Flows: a connection is assigned to the queue even if it is quiet right now – useful to check the classification.'))?>">
+				<option value="rate" selected><?=scg_t('below 1 Kbit/s')?></option>
+				<option value="flows"><?=scg_t('below 1 Kbit/s and no flows')?></option>
+			</select>
 			&nbsp;
 			<label><input type="checkbox" id="scg_idleifs"> <?=scg_t('Show idle interfaces')?></label>
 			&nbsp;
@@ -242,12 +246,13 @@ events.push(function() {
 	var sv;
 	if ((sv = load('interval')) !== null) $('#scg_interval').val(sv);
 	if ((sv = load('unit')) !== null) $('#scg_unit').val(sv);
+	if ((sv = load('idlemode')) !== null) $('#scg_idlemode').val(sv);
 	$('#scg_hideidle').prop('checked', load('hideidle') !== '0');
 	$('#scg_idleifs').prop('checked', load('idleifs') === '1');
 	$('#scg_showvpn').prop('checked', load('showvpn') !== '0');
 	var showMatrix = load('matrix') !== '0';
 	var showIfaces = load('ifaces') !== '0';
-	$('#scg_interval, #scg_unit').on('change', function() { store(this.id.replace('scg_', ''), $(this).val()); });
+	$('#scg_interval, #scg_unit, #scg_idlemode').on('change', function() { store(this.id.replace('scg_', ''), $(this).val()); });
 	$('#scg_hideidle, #scg_idleifs, #scg_showvpn').on('change', function() { store(this.id.replace('scg_', ''), this.checked ? '1' : '0'); });
 
 	var CLASS_ORDER = ['qControl', 'qACK', 'qRealtime', 'qVoIP', 'qGames', 'qInteractive', 'qOthersHigh', 'qDefault', 'qOthersLow', 'qBulk', 'qP2P'];
@@ -283,6 +288,12 @@ events.push(function() {
 		var i = 0;
 		while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
 		return (v >= 100 || i == 0 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)) + ' ' + u[i];
+	}
+	/* Idle: below 1 Kbit/s; optionally queues with flows count as in use */
+	var IDLE_BPS = 1000;
+	function queueIdle(q) {
+		if ((q.rate || 0) >= IDLE_BPS) return false;
+		return $('#scg_idlemode').val() !== 'flows' || !q.flows;
 	}
 	function fmtNum(n, d) {
 		if (n === null || n === undefined || isNaN(n)) return '–';
@@ -371,7 +382,7 @@ events.push(function() {
 					'<th class="scg-num">Rate</th><th style="width:30%">' + t('Share of limiter') + '</th><th class="scg-num">' + t('Packets/s') + '</th>' +
 					'<th class="scg-num">Drops/s</th><th class="scg-num">Drops</th></tr></thead><tbody>';
 				byWeight(p.queues).forEach(function(q) {
-					var idle = !q.flows && !q.rate;
+					var idle = queueIdle(q);
 					if (hide && idle) return;
 					h += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(q.name) + '</td><td><small>' + esc(q.descr) + '</small></td>' +
 						'<td class="scg-num">' + q.weight + '</td><td class="scg-num">' + q.flows + '</td>' +
@@ -445,7 +456,7 @@ events.push(function() {
 				var d = cell.D, u = cell.U;
 				if (d) sd += d;
 				if (u) su += u;
-				var idle = !d && !u;
+				var idle = (d || 0) < IDLE_BPS && (u || 0) < IDLE_BPS;
 				h += '<td class="' + (idle ? 'scg-idle' : '') + '"><span class="scg-dir">&darr;</span> ' + fmtRate(d === undefined ? null : d) +
 					'<br><span class="scg-dir">&uarr;</span> ' + fmtRate(u === undefined ? null : u) + '</td>';
 			});
@@ -962,7 +973,7 @@ events.push(function() {
 			var list = groups[g].slice().sort(function(a, b) { return a.descr.localeCompare(b.descr); });
 			var body = '';
 			list.forEach(function(i) {
-				var idle = (i.down || 0) < 1000 && (i.up || 0) < 1000;
+				var idle = (i.down || 0) < IDLE_BPS && (i.up || 0) < IDLE_BPS;
 				if (!showIdle && idle && g !== 'wan') return;
 				if (g === 'vpn' && !showVpn) return;
 				var typ = g === 'shaped' ? '<span class="label label-success">' + t('shaped') + ' (' + esc(SHAPED[i.if]) + ')</span>' : labels[g];
@@ -1024,7 +1035,7 @@ events.push(function() {
 		if (!paused) timer = setTimeout(poll, parseInt($('#scg_interval').val(), 10));
 	}
 	$('#scg_interval').on('change', schedule);
-	$('#scg_hideidle, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); } });
+	$('#scg_hideidle, #scg_idlemode, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); } });
 	/* Interfaces ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
 	$(document).on('change', '#scg_ifaces_show', function() {
 		showIfaces = this.checked;

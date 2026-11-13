@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+- Limiter Live: a queue counts as idle below 1 Kbit/s (before: only at
+  exactly 0 bit/s and no flows), so *Hide idle queues* also hides queues
+  with a few bit/s of background traffic. Selectable next to the checkbox:
+  *below 1 Kbit/s and no flows* keeps queues with an assigned connection
+  visible, to check the classification (issue #6). Matrix cells use the
+  same threshold.
+
 ## 0.6.0
 - Limiter Live: latency per interface, measured through a selectable queue
   of each interface (default: the interactive class, qInteractive or
