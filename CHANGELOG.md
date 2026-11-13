@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2
+- Latency per interface: each interface is compared with the WAN reference
+  over the same time span. After a speed test the reference still contained
+  the latency of the test while the probes had been paused, so the queue
+  delay was negative for up to 10 s (issue #7).
+- Limiter Live: idle threshold for queues raised to 5 Kbit/s. The probe
+  pings of *Latency per interface* alone put ~2 Kbit/s into each probed
+  queue, so these queues were never hidden (issue #8).
+
 ## 0.6.1
 - Limiter Live: a queue counts as idle below 1 Kbit/s (before: only at
   exactly 0 bit/s and no flows), so *Hide idle queues* also hides queues

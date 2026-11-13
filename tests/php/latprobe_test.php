@@ -100,6 +100,25 @@ check($by['LAN']['stats']['avg'] > 14 && $by['LAN']['stats']['avg'] < 18 && $by[
 	$by['LAN']['stats']['avg'] . ' ms, GUEST ' . $by['GUEST']['stats']['avg'] . ' ms)');
 check($by['GUEST']['stats']['loss'] > 0 && $by['LAN']['stats']['loss'] == 0, 'loss per interface (' . $by['GUEST']['stats']['loss'] . ' %)');
 check(count($by['LAN']['hist']) >= 9 && $by['LAN']['hist'][0][1] !== null, 'per-second history (' . count($by['LAN']['hist']) . ' s)');
+check(abs($by['LAN']['ref']['avg'] - 12) < 0.01, 'WAN reference per interface (' . $by['LAN']['ref']['avg'] . ' ms)');
+
+/* After a pause (speed test) the reference covers only the span of the interface's samples */
+$ar2 = new SCGAutorate($cfg, array());
+$ar2->setLatChannels(array($ch[0]));
+$t = 8000.0;
+for ($i = 0; $i < 25; $i++) {          /* 5 s speed test: reference only, high latency */
+	$ar2->onRtt('192.0.2.1', 400, $t);
+	$t += 0.2;
+}
+for ($i = 0; $i < 25; $i++) {          /* 5 s after: both */
+	$ar2->onRtt('192.0.2.1', 12, $t);
+	$ar2->onLatRtt('LAN', 15, $t);
+	$t += 0.2;
+}
+$st2 = $ar2->latStatus($t);
+$ref2 = $st2[0]['ref']['avg'];
+check($ref2 !== null && abs($ref2 - 12) < 0.01 && $st2[0]['stats']['avg'] - $ref2 > 0,
+	'reference after a pause excludes the paused span (' . $ref2 . ' ms, overall ' . $ar2->stats()['avg'] . ' ms)');
 $full = $ar->status('socket');
 check(isset($full['iflat']) && count($full['iflat']) == 2 && $full['iflat_class'] == 'qInteractive' && $full['iflat'][0]['class'] == 'qInteractive', 'iflat in the service status');
 $ar->setLatChannels(array($ch[0]));

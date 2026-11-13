@@ -869,8 +869,17 @@ class SCGAutorate {
 			while ($c['samples'] && $c['samples'][0][0] < $now - 10) {
 				array_shift($c['samples']);
 			}
+			/* WAN-Referenz ueber denselben Zeitraum wie die Proben des Interfaces
+			 * (nach einer Pause, z. B. Speedtest, enthielte sie sonst noch alte Werte) */
+			$from = $c['samples'] ? $c['samples'][0][0] : $now;
+			$ref = array();
+			foreach ($this->samples as $s) {
+				if ($s[0] >= $from) {
+					$ref[] = $s;
+				}
+			}
 			$out[] = array('tag' => (string)$tag, 'if' => $c['if'], 'tos' => sprintf('0x%02x', $c['tos']), 'class' => $c['class'],
-				'stats' => self::sampleStats($c['samples']), 'hist' => $c['hist']);
+				'stats' => self::sampleStats($c['samples']), 'ref' => self::sampleStats($ref), 'hist' => $c['hist']);
 		}
 		unset($c);
 		return $out;

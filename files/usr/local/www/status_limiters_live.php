@@ -195,8 +195,8 @@ if ($expire !== null && $expire !== 0) {
 			&nbsp;
 			<label><input type="checkbox" id="scg_hideidle"> <?=scg_t('Hide idle queues')?></label>
 			<select class="form-control input-sm" id="scg_idlemode" title="<?=htmlspecialchars(scg_t('When a queue counts as idle. Flows: a connection is assigned to the queue even if it is quiet right now – useful to check the classification.'))?>">
-				<option value="rate" selected><?=scg_t('below 1 Kbit/s')?></option>
-				<option value="flows"><?=scg_t('below 1 Kbit/s and no flows')?></option>
+				<option value="rate" selected><?=scg_t('below 5 Kbit/s')?></option>
+				<option value="flows"><?=scg_t('below 5 Kbit/s and no flows')?></option>
 			</select>
 			&nbsp;
 			<label><input type="checkbox" id="scg_idleifs"> <?=scg_t('Show idle interfaces')?></label>
@@ -289,8 +289,8 @@ events.push(function() {
 		while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
 		return (v >= 100 || i == 0 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)) + ' ' + u[i];
 	}
-	/* Idle: below 1 Kbit/s; optionally queues with flows count as in use */
-	var IDLE_BPS = 1000;
+	/* Idle: below 5 Kbit/s (probe pings of "Latency per interface" add ~2 Kbit/s); optionally queues with flows count as in use */
+	var IDLE_BPS = 5000;
 	function queueIdle(q) {
 		if ((q.rate || 0) >= IDLE_BPS) return false;
 		return $('#scg_idlemode').val() !== 'flows' || !q.flows;
@@ -831,7 +831,7 @@ events.push(function() {
 			var cc = c['class'] || cls;
 			var w = wq[c.tag + '|' + cc] !== undefined ? wq[c.tag + '|' + cc] : (EW[c.tag] ? EW[c.tag][cc] : undefined);
 			return { ref: false, tag: c.tag, name: CFG.ifdescr[c.tag] || c.tag, sub: c.tag + ' &middot; DSCP ' + c.tos, weight: w === undefined ? null : w,
-				avg: st.avg, p95: st.p95, loss: st.loss, n: st.n, hist: c.hist.map(function(r) { return [r[0], r[1]]; }) };
+				avg: st.avg, p95: st.p95, loss: st.loss, n: st.n, refAvg: c.ref ? c.ref.avg : ws.avg, hist: c.hist.map(function(r) { return [r[0], r[1]]; }) };
 		});
 		list.sort(function(x, y) { return ((y.weight || 0) - (x.weight || 0)) || x.name.localeCompare(y.name); });
 		rows = rows.concat(list);
@@ -866,8 +866,9 @@ events.push(function() {
 			var pp = r.p95 === null || r.p95 === undefined ? 0 : Math.min(100, r.p95 / smax * 100);
 			var qd = '–', hot = false;
 			if (!r.ref) {
-				if (r.avg !== null && r.avg !== undefined && ws.avg !== null && ws.avg !== undefined) {
-					var dv = r.avg - ws.avg;
+				/* Referenz ueber denselben Zeitraum wie die Proben des Interfaces */
+				if (r.avg !== null && r.avg !== undefined && r.refAvg !== null && r.refAvg !== undefined) {
+					var dv = r.avg - r.refAvg;
 					hot = dv > IFLAT_HOT;
 					qd = (dv >= 0 ? '+' : '') + dv.toFixed(1) + ' ms';
 				}
