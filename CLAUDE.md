@@ -109,6 +109,17 @@ On a real pfSense: `sh install.sh` as root (tcsh: run `sh` first for
 `$(…)`), then check Status > Limiter Live and the service with
 `/usr/local/etc/rc.d/scg_autorate.sh status`.
 
-## Open items
+## Open items and workflow
 
-Tracked as GitHub issues.
+- Open items are GitHub issues in this repo. Work on one issue per
+  session; reference it in commits (`Refs #4`) and close it with the last
+  commit (`Fixes #4`) or via `gh issue close`. New ideas that come up while
+  working become new issues instead of staying in the conversation.
+- Before starting, update the local clone (`git pull`); others (other
+  sessions, the GitHub web UI, pull requests) may have pushed.
+- After a change: tests (`tests/run.sh`, `tools/i18n_check.py`), version
+  bump, CHANGELOG entry, push to `main`. For a release, build
+  `pfSense-pkg-ShaperClassGen-<version>.tar.gz` (files, install.sh,
+  uninstall.sh, READMEs, LICENSE in a folder of the same name).
+- If a private notes directory is available in the session (e.g. added with
+  `--add-dir`), keep it up to date as described in its own `CLAUDE.md`.
