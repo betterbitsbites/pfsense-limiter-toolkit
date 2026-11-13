@@ -574,7 +574,7 @@ class SCGAutorate {
 	public $rhistLen = 300;
 	public $cur = null;           /* laufende Sekunde */
 	public $samples = array();    /* letzte Rohproben array(t, rtt, delta) fuer Kennzahlen */
-	/* Latenz je Interface (durch dessen qDefault-Queue): Tag => Kanal */
+	/* Latenz je Interface (durch die gewaehlte Queue des Interfaces): Tag => Kanal */
 	public $lat = array();
 	public $latLen = 120;         /* Sekunden Verlauf je Interface */
 
@@ -794,18 +794,19 @@ class SCGAutorate {
 	}
 
 	/*
-	 * Kanaele der Latenzmessung je Interface setzen: array(array('tag', 'if', 'tos'), ...).
-	 * Bleibt ein Interface mit demselben TOS-Wert, bleibt auch sein Verlauf.
+	 * Kanaele der Latenzmessung je Interface setzen: array(array('tag', 'if', 'tos', 'class'), ...).
+	 * Bleibt ein Interface mit demselben TOS-Wert und derselben Klasse, bleibt auch sein Verlauf.
 	 */
 	function setLatChannels($list) {
 		$new = array();
 		foreach ($list as $c) {
 			$old = $this->lat[$c['tag']] ?? null;
-			if ($old && $old['tos'] == $c['tos']) {
+			$cls = (string)($c['class'] ?? '');
+			if ($old && $old['tos'] == $c['tos'] && $old['class'] === $cls) {
 				$old['if'] = $c['if'];
 				$new[$c['tag']] = $old;
 			} else {
-				$new[$c['tag']] = array('tag' => $c['tag'], 'if' => $c['if'], 'tos' => (int)$c['tos'],
+				$new[$c['tag']] = array('tag' => $c['tag'], 'if' => $c['if'], 'tos' => (int)$c['tos'], 'class' => $cls,
 					'samples' => array(), 'hist' => array(), 'cur' => null);
 			}
 		}
@@ -868,7 +869,7 @@ class SCGAutorate {
 			while ($c['samples'] && $c['samples'][0][0] < $now - 10) {
 				array_shift($c['samples']);
 			}
-			$out[] = array('tag' => (string)$tag, 'if' => $c['if'], 'tos' => sprintf('0x%02x', $c['tos']),
+			$out[] = array('tag' => (string)$tag, 'if' => $c['if'], 'tos' => sprintf('0x%02x', $c['tos']), 'class' => $c['class'],
 				'stats' => self::sampleStats($c['samples']), 'hist' => $c['hist']);
 		}
 		unset($c);
@@ -1111,6 +1112,7 @@ class SCGAutorate {
 	}
 
 	function status($mode, $err = '') {
+		$iflat = $this->latStatus();
 		$dirs = array();
 		foreach ($this->dirs as $d => $x) {
 			$dirs[$d] = array('pipe' => $x['pipe'], 'num' => $x['num'], 'shaper' => round($x['shaper']),
@@ -1133,7 +1135,7 @@ class SCGAutorate {
 			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'discarded' => $this->discarded,
 			'source' => $this->source, 'pid' => getmypid(), 'control' => $this->control, 'paused' => $this->paused,
 			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats(),
-			'iflat' => $this->latStatus(), 'iflat_class' => SCG_LAT_CLASS);
+			'iflat' => $iflat, 'iflat_class' => $iflat ? $iflat[0]['class'] : '');
 	}
 }
 

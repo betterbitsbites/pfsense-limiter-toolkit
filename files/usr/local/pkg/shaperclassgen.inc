@@ -30,7 +30,6 @@ define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
 define('SCG_RTAG2', 'SCG Pipe ');  /* Prefix ab 0.1.3: zeigt die Limiter-Pipes */
 define('SCG_DESCR_MAX', 52);      /* pfSense-Grenze fuer Regelbeschreibungen */
 define('SCG_CFG', 'installedpackages/shaperclassgen/settings');
-define('SCG_LAT_CLASS', 'qDefault');  /* Latenzmessung je Interface laeuft durch diese Klasse */
 
 /* ------------------------------------------------------------------ */
 /* Config-Helfer (2.7+ config_*_path, sonst globales $config)          */
@@ -158,6 +157,7 @@ function scg_switch_scheme($s, $to) {
 	foreach ($s['others'] as $k => $c) {
 		$s['others'][$k] = ($c === '') ? '' : ($map[$c] ?? '');
 	}
+	$s['latclass'] = $map[$s['latclass'] ?? ''] ?? '';
 	$s['scheme'] = $to;
 	return $s;
 }
@@ -444,6 +444,7 @@ function scg_default_settings($scheme = 'simple') {
 		'srcports' => false,
 		'ecn' => false,
 		'latprobe' => false,
+		'latclass' => '',
 		'aliasname' => 'SCG_LOCALNETS',
 		'devudp' => true,
 		'gamenets' => array(),
@@ -843,10 +844,23 @@ function scg_make_rule($v, $cls, $s, $descr, $proto = null, $ipproto = 'inet46',
  * Latenzmessung je Interface: Der Autorate-Dienst pingt fuer jedes geshapte
  * Interface mit einem eigenen DSCP-Wert. Eine Floating-Match-Regel auf den
  * WAN-Interfaces (Richtung out, Quelle = pfSense selbst) legt diese Pings in
- * die qDefault-Queues des Interfaces; die Antworten folgen dem State.
+ * die gewaehlte Queue des Interfaces (scg_latprobe_class); die Antworten
+ * folgen dem State.
  * DSCP-Werte aus Pool 2 (xxxx11, RFC 2474: experimentell/lokal), damit sie
  * nicht mit ueblichen Markierungen kollidieren. Als TOS-Byte, ECN-Bits 0.
  */
+/*
+ * Klasse, durch die die Latenzmessung laeuft: gewaehlt oder die interaktive
+ * Klasse des Schemas. Zeigt, was bevorzugter Verkehr unter Last erlebt.
+ */
+function scg_latprobe_class($s) {
+	$c = (string)($s['latclass'] ?? '');
+	if ($c !== '' && isset(scg_classes(scg_scheme($s))[$c])) {
+		return $c;
+	}
+	return scg_role_class(scg_scheme($s), 'interactive');
+}
+
 function scg_latprobe_tos_pool() {
 	$out = array();
 	for ($dscp = 3; $dscp < 64; $dscp += 4) {
@@ -866,7 +880,7 @@ function scg_wan_interfaces() {
 	return $out;
 }
 
-function scg_latprobe_rule($v, $wanifs, $tos) {
+function scg_latprobe_rule($v, $wanifs, $tos, $cls) {
 	return array(
 		'type' => 'match',
 		'interface' => implode(',', $wanifs),
@@ -879,10 +893,10 @@ function scg_latprobe_rule($v, $wanifs, $tos) {
 		'source' => array('network' => '(self)'),
 		'destination' => array('any' => ''),
 		'dscp' => $tos,
-		'descr' => scg_rule_descr($v['tag'], SCG_LAT_CLASS, 'Latency probe'),
+		'descr' => scg_rule_descr($v['tag'], $cls, 'Latency probe'),
 		/* Richtung out auf dem WAN = Upload; Antworten = Download */
-		'dnpipe' => scg_qname('up', $v['tag'], SCG_LAT_CLASS),
-		'pdnpipe' => scg_qname('down', $v['tag'], SCG_LAT_CLASS),
+		'dnpipe' => scg_qname('up', $v['tag'], $cls),
+		'pdnpipe' => scg_qname('down', $v['tag'], $cls),
 		'scg' => 'yes',
 	);
 }
@@ -890,7 +904,7 @@ function scg_latprobe_rule($v, $wanifs, $tos) {
 /*
  * Messkanaele aus den tatsaechlich erzeugten Regeln (nicht aus den
  * gespeicherten Einstellungen): nur was angewendet ist, wird gemessen.
- * Liefert array(array('tag', 'if', 'tos' (int)), ...) in Regelreihenfolge.
+ * Liefert array(array('tag', 'if', 'tos' (int), 'class'), ...) in Regelreihenfolge.
  */
 function scg_latprobe_channels() {
 	$ifs = array();
@@ -906,7 +920,7 @@ function scg_latprobe_channels() {
 		if (!scg_is_generated_rule($r) || empty($r['dscp']) || ($r['direction'] ?? '') !== 'out' || isset($r['disabled'])) {
 			continue;
 		}
-		if (!preg_match('/^U_([A-Za-z0-9]+)_' . SCG_LAT_CLASS . '$/', (string)($r['dnpipe'] ?? ''), $m) ||
+		if (!preg_match('/^U_([A-Za-z0-9]+)_(q[A-Za-z0-9]+)$/', (string)($r['dnpipe'] ?? ''), $m) ||
 		    !preg_match('/^0x([0-9a-f]{2})$/i', (string)$r['dscp'], $t)) {
 			continue;
 		}
@@ -915,7 +929,7 @@ function scg_latprobe_channels() {
 			continue;
 		}
 		$seen[$tos] = true;
-		$out[] = array('tag' => $m[1], 'if' => $ifs[$m[1]] ?? '', 'tos' => $tos);
+		$out[] = array('tag' => $m[1], 'if' => $ifs[$m[1]] ?? '', 'tos' => $tos, 'class' => $m[2]);
 	}
 	return $out;
 }
@@ -1013,6 +1027,7 @@ function scg_build_plan($s) {
 	if (!empty($s['latprobe'])) {
 		$wanifs = scg_wan_interfaces();
 		$pool = scg_latprobe_tos_pool();
+		$lcls = scg_latprobe_class($s);
 		$k = 0;
 		foreach ($s['vlans'] as $v) {
 			if (empty($v['enable'])) {
@@ -1027,7 +1042,7 @@ function scg_build_plan($s) {
 				break;
 			}
 			$plan['probes'][$v['tag']] = $pool[$k];
-			$plan['rules'][] = scg_latprobe_rule($v, $wanifs, $pool[$k++]);
+			$plan['rules'][] = scg_latprobe_rule($v, $wanifs, $pool[$k++], $lcls);
 		}
 	}
 	return $plan;

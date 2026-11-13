@@ -96,10 +96,15 @@ passiert nie einen Limiter, sie zeigt also nur die Leitung. Mit
   `xxxx11`, für lokale Nutzung reserviert; höchstens 16 Interfaces) und eine
   Floating-Match-Regel: Interfaces mit Gateway, Richtung *out*, ICMP Echo
   Request von *This firewall (self)* mit diesem DSCP-Wert →
-  `U_<Kürzel>_qDefault` / `D_<Kürzel>_qDefault`.
+  `U_<Kürzel>_<Klasse>` / `D_<Kürzel>_<Klasse>`.
+- Die Queue ist neben der Option wählbar. Standard ist die interaktive
+  Klasse (qInteractive, bei 7 Klassen qOthersHigh): Der Vergleich soll zeigen,
+  wie gut der Shaper bevorzugten Verkehr schützt. Die Echtzeit-Klasse zeigt
+  den besten Fall, qDefault den gewöhnlichen Verkehr. Beim Wechsel des
+  Schemas wird die Wahl mit den übrigen Klassen umgeschlüsselt.
 - Der Autorate-Dienst (auch im reinen Messbetrieb) pingt die Autorate-Ziele
   je Interface etwa 5-mal pro Sekunde mit diesem DSCP-Wert und eigener
-  ICMP-ID; pf legt dafür einen eigenen State an, der durch die qDefault-Queue
+  ICMP-ID; pf legt dafür einen eigenen State an, der durch die gewählte Queue
   des Interfaces läuft. Die ID wechselt alle 5 Minuten und nach
   Konfigurationsänderungen, damit ein State, der vor der Regel entstand,
   nicht bleibt. Last: wenige kbit/s je Interface. Während Speedtests

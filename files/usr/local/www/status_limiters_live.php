@@ -786,7 +786,8 @@ events.push(function() {
 
 	/*
 	 * Latenz je Interface: Pings der pfSense mit eigenem DSCP-Wert je Interface,
-	 * die eine Match-Regel auf dem WAN in die qDefault-Queues des Interfaces legt.
+	 * die eine Match-Regel auf dem WAN in die gewaehlte Queue des Interfaces legt
+	 * (Klasse im Class Generator, Standard: interaktive Klasse).
 	 * WAN-Zeile = dieselben Ziele ohne Queue (die Leitung selbst). Wartezeit in
 	 * der Queue = Interface-Latenz minus WAN-Referenz.
 	 */
@@ -798,13 +799,13 @@ events.push(function() {
 				t('Latency per interface: no probe rules are active yet. Click "Generate / Update" in the Class Generator.') + '</div></div>' : '');
 			return;
 		}
-		var cls = a.iflat_class || 'qDefault';
+		var cls = a.iflat_class || '';
 		/* Gewicht der gemessenen Queue aus den laufenden Queues, sonst erwartetes Gewicht */
 		var wq = {};
 		data.pipes.forEach(function(p) {
 			p.queues.forEach(function(q) {
 				var m = /^([DU])_([A-Za-z0-9]+)_([A-Za-z0-9]+)$/.exec(q.name);
-				if (m && m[3] === cls && (m[1] === 'D' || wq[m[2]] === undefined)) wq[m[2]] = q.weight;
+				if (m && (m[1] === 'D' || wq[m[2] + '|' + m[3]] === undefined)) wq[m[2] + '|' + m[3]] = q.weight;
 			});
 		});
 		var N = 120, now = 0;
@@ -815,7 +816,8 @@ events.push(function() {
 		var list = a.iflat.map(function(c) {
 			var st = c.stats || {};
 			c.hist.forEach(function(r) { if (r[0] > now) now = r[0]; });
-			var w = wq[c.tag] !== undefined ? wq[c.tag] : (EW[c.tag] ? EW[c.tag][cls] : undefined);
+			var cc = c['class'] || cls;
+			var w = wq[c.tag + '|' + cc] !== undefined ? wq[c.tag + '|' + cc] : (EW[c.tag] ? EW[c.tag][cc] : undefined);
 			return { ref: false, tag: c.tag, name: CFG.ifdescr[c.tag] || c.tag, sub: c.tag + ' &middot; DSCP ' + c.tos, weight: w === undefined ? null : w,
 				avg: st.avg, p95: st.p95, loss: st.loss, n: st.n, hist: c.hist.map(function(r) { return [r[0], r[1]]; }) };
 		});

@@ -25,8 +25,8 @@ check($r['direction'] == 'out' && $r['protocol'] == 'icmp' && $r['icmptype'] == 
 	'probe rule: ICMP echo request, direction out');
 check($r['interface'] == 'wan,opt5', 'probe rule on the interfaces with a gateway (' . $r['interface'] . ')');
 check(($r['source']['network'] ?? '') == '(self)' && isset($r['destination']['any']), 'source = pfSense itself, destination any');
-check($r['dnpipe'] == 'U_LAN_qDefault' && $r['pdnpipe'] == 'D_LAN_qDefault', 'probe goes through qDefault of its interface');
-check(scg_is_generated_rule($r) && strpos($r['descr'], 'SCG Pipe U/D_LAN_qDefault') === 0 && strlen($r['descr']) <= SCG_DESCR_MAX,
+check($r['dnpipe'] == 'U_LAN_qInteractive' && $r['pdnpipe'] == 'D_LAN_qInteractive', 'default: probe goes through the interactive class of its interface');
+check(scg_is_generated_rule($r) && strpos($r['descr'], 'SCG Pipe U/D_LAN_qInteractive') === 0 && strlen($r['descr']) <= SCG_DESCR_MAX,
 	'probe rule is marked: ' . $r['descr']);
 check($pr[0]['dscp'] !== $pr[1]['dscp'], 'each interface has its own DSCP value');
 $last = array_slice($p['rules'], -2);
@@ -38,6 +38,19 @@ foreach ($pool as $t) {
 }
 check($ok, 'DSCP pool: 16 values from pool 2 (xxxx11), ECN bits zero');
 check(scg_rule_identity($pr[0]) !== scg_rule_identity(array_merge($pr[0], array('dscp' => $pr[1]['dscp']))), 'DSCP is part of the rule identity');
+
+/* selectable class; unknown class falls back to the interactive class */
+$sel = $s;
+$sel['latclass'] = 'qRealtime';
+$q = scg_test_probes(scg_build_plan($sel)['rules']);
+check($q[0]['dnpipe'] == 'U_LAN_qRealtime' && $q[1]['pdnpipe'] == 'D_GUEST_qRealtime', 'selected class is used: ' . $q[0]['dnpipe']);
+$sel['latclass'] = 'qVoIP';
+check(scg_latprobe_class($sel) == 'qInteractive', 'class from another scheme falls back to the interactive class');
+$sel['latclass'] = 'qRealtime';
+$cl = scg_switch_scheme($sel, 'classic');
+check($cl['latclass'] == 'qControl' && scg_latprobe_class($cl) == 'qControl', 'scheme switch converts the class (' . $cl['latclass'] . ')');
+$cl['latclass'] = '';
+check(scg_latprobe_class($cl) == 'qOthersHigh', 'classic default: qOthersHigh');
 
 /* more interfaces than DSCP values */
 $many = $s;
@@ -55,7 +68,7 @@ $ok = scg_apply($s, $e, $m);
 ob_end_clean();
 check($ok, 'apply with probes: ' . implode(' | ', $e));
 $ch = scg_latprobe_channels();
-check(count($ch) == 2 && $ch[0]['tag'] == 'LAN' && $ch[0]['if'] == 'lan' && $ch[0]['tos'] == hexdec($pool[0]) && $ch[1]['tag'] == 'GUEST',
+check(count($ch) == 2 && $ch[0]['tag'] == 'LAN' && $ch[0]['if'] == 'lan' && $ch[0]['tos'] == hexdec($pool[0]) && $ch[1]['tag'] == 'GUEST' && $ch[0]['class'] == 'qInteractive',
 	'channels from applied rules: ' . json_encode($ch));
 $fl = array_values(array_filter(scg_cfg_get('filter/rule'), function($r) { return !empty($r['floating']); }));
 $ng = count(array_filter($fl, 'scg_is_generated_rule'));
@@ -88,6 +101,8 @@ check($by['LAN']['stats']['avg'] > 14 && $by['LAN']['stats']['avg'] < 18 && $by[
 check($by['GUEST']['stats']['loss'] > 0 && $by['LAN']['stats']['loss'] == 0, 'loss per interface (' . $by['GUEST']['stats']['loss'] . ' %)');
 check(count($by['LAN']['hist']) >= 9 && $by['LAN']['hist'][0][1] !== null, 'per-second history (' . count($by['LAN']['hist']) . ' s)');
 $full = $ar->status('socket');
-check(isset($full['iflat']) && count($full['iflat']) == 2 && $full['iflat_class'] == 'qDefault', 'iflat in the service status');
+check(isset($full['iflat']) && count($full['iflat']) == 2 && $full['iflat_class'] == 'qInteractive' && $full['iflat'][0]['class'] == 'qInteractive', 'iflat in the service status');
 $ar->setLatChannels(array($ch[0]));
 check(count($ar->lat) == 1 && count($ar->lat['LAN']['hist']) >= 9, 'channel change keeps the history of unchanged interfaces');
+$ar->setLatChannels(array(array_merge($ch[0], array('class' => 'qRealtime'))));
+check(count($ar->lat['LAN']['hist']) == 0 && $ar->lat['LAN']['class'] == 'qRealtime', 'class change starts a new history');

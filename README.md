@@ -157,12 +157,17 @@ Measure latency per interface* enabled and applied:
 - Every shaped interface gets its own DSCP value (DSCP pool 2, `xxxx11`,
   reserved for local use; at most 16 interfaces) and one floating match rule:
   interfaces with a gateway, direction *out*, ICMP echo request from *This
-  firewall (self)* with that DSCP value → `U_<tag>_qDefault` /
-  `D_<tag>_qDefault`.
+  firewall (self)* with that DSCP value → `U_<tag>_<class>` /
+  `D_<tag>_<class>`.
+- The queue is selectable next to the option. Default is the interactive
+  class (qInteractive, or qOthersHigh with 7 classes): the comparison is meant
+  to show how well the shaper protects prioritized traffic. Choose the
+  real-time class for the best case or qDefault for what ordinary traffic
+  gets. On a scheme switch the choice is converted with the other classes.
 - The Autorate service (also in measure-only mode) pings the Autorate ping
   targets about 5 times per second per interface with that DSCP value and its
   own ICMP ID, so pf creates a separate state that runs through the
-  interface's qDefault queue. The ID changes every 5 minutes and after
+  selected queue of the interface. The ID changes every 5 minutes and after
   configuration changes, so a state created before the rule existed does not
   stay. Load: a few kbit/s per interface. Paused during speed tests.
 - Limiter Live shows one row per interface, sorted by weight, plus a WAN

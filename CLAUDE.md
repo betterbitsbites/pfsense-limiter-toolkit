@@ -82,7 +82,8 @@ History of changes: `CHANGELOG.md`.
   Paused during speed tests (`/var/run/scg_autorate.pause` with expiry).
 - **Latency per interface** (option `latprobe`): one match rule per shaped
   interface on the gateway interfaces, direction out, ICMP echoreq from
-  `(self)`, own DSCP (pool 2, max 16) → `U/D_<tag>_qDefault`. The service
+  `(self)`, own DSCP (pool 2, max 16) → `U/D_<tag>_<class>`; class selectable
+  (`latclass`, default = interactive role via `scg_latprobe_class`). The service
   reads its channels from the *applied* rules (`scg_latprobe_channels`), not
   the settings. Each channel needs its own ICMP ID (pf keys ICMP states by
   ID; a shared ID would reuse the unmarked state without queue); IDs rotate

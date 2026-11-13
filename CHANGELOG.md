@@ -1,8 +1,10 @@
 # Changelog
 
 ## 0.6.0
-- Limiter Live: latency per interface, measured through each interface's own
-  qDefault queue (issue #4). Optional in the Class Generator (*Options*):
+- Limiter Live: latency per interface, measured through a selectable queue
+  of each interface (default: the interactive class, qInteractive or
+  qOthersHigh, to show what prioritized traffic gets; issue #4). Optional in
+  the Class Generator (*Options*):
   one floating match rule per interface (WAN side, direction out, ICMP echo
   request from pfSense itself, own DSCP value from DSCP pool 2). The Autorate
   service pings the Autorate targets ~5x/s per interface with that DSCP value
