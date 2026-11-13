@@ -13,6 +13,9 @@
   status JSON contains `iflat`.
 - Class Generator preview shows direction, DSCP and destination *any*
   correctly.
+- Limiter Live: the Interfaces panel can be collapsed with a *Show*
+  checkbox in its header, like *Classes per interface* (remembered in the
+  browser).
 
 ## 0.5.9
 - Generated rules keep their tracker ID and creation time when the classes

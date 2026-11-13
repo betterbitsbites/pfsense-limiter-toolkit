@@ -246,6 +246,7 @@ events.push(function() {
 	$('#scg_idleifs').prop('checked', load('idleifs') === '1');
 	$('#scg_showvpn').prop('checked', load('showvpn') !== '0');
 	var showMatrix = load('matrix') !== '0';
+	var showIfaces = load('ifaces') !== '0';
 	$('#scg_interval, #scg_unit').on('change', function() { store(this.id.replace('scg_', ''), $(this).val()); });
 	$('#scg_hideidle, #scg_idleifs, #scg_showvpn').on('change', function() { store(this.id.replace('scg_', ''), this.checked ? '1' : '0'); });
 
@@ -936,6 +937,10 @@ events.push(function() {
 	 */
 	function renderIfaces(data) {
 		if (!data.ifaces || !data.ifaces.length) { $('#scg_ifaces').html(''); return; }
+		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
+			'<small>' + t('Download / upload as seen from the internet') + '</small>' +
+			'<label class="pull-right scg-toggle"><input type="checkbox" id="scg_ifaces_show"' + (showIfaces ? ' checked' : '') + '> ' + t('Show') + '</label></h2></div>';
+		if (!showIfaces) { $('#scg_ifaces').html(head + '</div>'); return; }
 		var showIdle = $('#scg_idleifs').prop('checked'), showVpn = $('#scg_showvpn').prop('checked');
 		var groups = { wan: [], vpn: [], shaped: [], unshaped: [] };
 		var wanDown = 0, wanUp = 0, haveWan = false;
@@ -985,8 +990,7 @@ events.push(function() {
 				'<td class="scg-num' + (unDown > 0.1 * wanDown && unDown > 1e6 ? ' scg-hot' : '') + '">' + fmtRate(unDown) + '</td>' +
 				'<td class="scg-num' + (unUp > 0.1 * wanUp && unUp > 1e6 ? ' scg-hot' : '') + '">' + fmtRate(unUp) + '</td></tr>';
 		}
-		$('#scg_ifaces').html('<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
-			'<small>' + t('Download / upload as seen from the internet') + '</small></h2></div><div class="table-responsive panel-body">' +
+		$('#scg_ifaces').html(head + '<div class="table-responsive panel-body">' +
 			'<table class="table table-condensed" style="margin-bottom:0"><thead><tr><th>Interface</th><th>' + t('Type') + '</th>' +
 			'<th class="scg-num">&darr; Download</th><th class="scg-num">&uarr; Upload</th></tr></thead><tbody>' + rows + summary +
 			'</tbody></table></div></div>');
@@ -1021,6 +1025,12 @@ events.push(function() {
 	}
 	$('#scg_interval').on('change', schedule);
 	$('#scg_hideidle, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); } });
+	/* Interfaces ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
+	$(document).on('change', '#scg_ifaces_show', function() {
+		showIfaces = this.checked;
+		store('ifaces', showIfaces ? '1' : '0');
+		if (prev) renderIfaces(prev);
+	});
 	/* Matrix ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
 	$(document).on('change', '#scg_matrix_show', function() {
 		showMatrix = this.checked;
