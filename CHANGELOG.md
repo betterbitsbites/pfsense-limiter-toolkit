@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.4
+- Re-creating limiters (0.6.3) now loads the queues *before* the limiter.
+  In pfSense's order (limiter, scheduler, queues) the first packet that
+  reaches the new scheduler blocks CoDel for the remaining queues, so under
+  load the repair did not work. Queues loaded without their scheduler get
+  CoDel and are attached when the limiter is created (tested under load:
+  all queues of the limiter with CoDel). Only the affected limiters are
+  reloaded; the running Autorate bandwidth is written into the limiter line
+  directly (issue #9).
+- README: a filter reload under load can lose CoDel too.
+
 ## 0.6.3
 - CoDel on the child queues was lost whenever queues were changed while the
   limiter carried traffic: the kernel refuses AQM then

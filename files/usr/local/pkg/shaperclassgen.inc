@@ -24,7 +24,7 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.3');
+define('SCG_VERSION', '0.6.4');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
@@ -1737,6 +1737,27 @@ function scg_dn_recreate($rulesfile = SCG_DN_RULES) {
 	foreach (scg_dn_parse_pipes($o) as $num => $p) {
 		$bw[$num] = $p['bw'];
 	}
+	/* Queues zuerst laden: ohne Scheduler bekommen sie ihr AQM ohne "flowset busy"
+	   und werden beim Anlegen des Schedulers angehaengt. Danach pipe/sched mit der
+	   laufenden Bandbreite. Andere Limiter bleiben unberuehrt. */
+	$qlines = array();
+	$plines = array();
+	foreach (preg_split('/\r?\n/', $rules) as $line) {
+		$line = trim($line);
+		if (preg_match('/^queue\s+\d+\s+config\s+pipe\s+(\d+)\b/', $line, $m) && isset($pipes[(int)$m[1]])) {
+			$qlines[] = $line;
+		} elseif (preg_match('/^(pipe|sched)\s+(\d+)\s+config\b/', $line, $m) && isset($pipes[(int)$m[2]])) {
+			$pn = (int)$m[2];
+			if ($m[1] === 'pipe' && !empty($bw[$pn])) {
+				$kbit = max(1, (int)round($bw[$pn] / 1000));
+				$line = preg_match('/\sbw\s+\S+/', $line) ? preg_replace('/\sbw\s+\S+/', " bw {$kbit}Kb", $line, 1) : $line . " bw {$kbit}Kb";
+			}
+			$plines[] = $line;
+		}
+	}
+	if (!$plines) {
+		return array($before, $before);
+	}
 	foreach ($queues as $qn => $q) {
 		if (isset($pipes[$q['sched']])) {
 			mwexec('/sbin/dnctl queue delete ' . intval($qn), true);
@@ -1745,23 +1766,16 @@ function scg_dn_recreate($rulesfile = SCG_DN_RULES) {
 	foreach (array_keys($pipes) as $pn) {
 		mwexec('/sbin/dnctl pipe delete ' . intval($pn), true);
 	}
-	mwexec('/sbin/dnctl ' . escapeshellarg($rulesfile), true);
-	/* Laufende Bandbreite wiederherstellen, falls sie von der Konfiguration abweicht */
-	foreach (array_keys($pipes) as $pn) {
-		if (empty($bw[$pn]) || !preg_match('/^pipe ' . intval($pn) . ' config.*$/m', $rules, $m)) {
-			continue;
-		}
-		$kbit = max(1, (int)round($bw[$pn] / 1000));
-		$line = trim($m[0]);
-		$line = preg_match('/\sbw\s+\S+/', $line) ? preg_replace('/\sbw\s+\S+/', " bw {$kbit}Kb", $line, 1) : $line . " bw {$kbit}Kb";
-		if ($line !== trim($m[0])) {
-			$args = array();
-			foreach (preg_split('/\s+/', $line) as $t) {
-				$args[] = escapeshellarg($t);
-			}
-			mwexec('/sbin/dnctl ' . implode(' ', $args), true);
-		}
+	$qfile = $rulesfile . '.scg_q';
+	$pfile = $rulesfile . '.scg_p';
+	file_put_contents($qfile, implode("\n", $qlines) . "\n");
+	file_put_contents($pfile, implode("\n", $plines) . "\n");
+	if ($qlines) {
+		mwexec('/sbin/dnctl ' . escapeshellarg($qfile), true);
 	}
+	mwexec('/sbin/dnctl ' . escapeshellarg($pfile), true);
+	@unlink($qfile);
+	@unlink($pfile);
 	$o = array();
 	exec('/sbin/dnctl queue show 2>/dev/null', $o);
 	$after = 0;

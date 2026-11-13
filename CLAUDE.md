@@ -28,8 +28,11 @@ History of changes: `CHANGELOG.md`.
   kernel only attaches AQM while the limiter's scheduler has no instance
   (no traffic yet); a queue changed later keeps the AQM flag without AQM
   (`dnctl queue show` line ends empty). `scg_dn_recreate()` deletes the
-  affected limiters and reloads `/tmp/rules.limiter`; called after apply and
-  from Limiter Live.
+  affected limiters and loads their lines from `/tmp/rules.limiter` in the
+  order **queues first, then pipe/sched** (a queue without scheduler gets
+  its AQM unchecked and is attached when the scheduler is created; pfSense's
+  own order pipe → sched → queue loses that race under load). Running
+  bandwidth goes into the pipe line. Called after apply and from Limiter Live.
   Autorate only changes limiters (pipes), never queues.
 - Limiter Live: queues sorted by weight; interfaces grouped
   WAN → VPN → shaped → not shaped, by name; matrix by priority; "not shaped"

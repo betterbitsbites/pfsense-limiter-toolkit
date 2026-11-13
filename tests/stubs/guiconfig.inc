@@ -38,7 +38,7 @@ $__s['autorate'] = ['enable'=>getenv('SCG_CONTROL')!=='0','monitor'=>true,'down'
 $config['installedpackages']['shaperclassgen']['settings'] = base64_encode(json_encode($__s));
 $config['dnshaper']['queue'][2]['bandwidth']['item'][0] = ['bw'=>'800','bwscale'=>'Mb'];
 $config['dnshaper']['queue'][3]['bandwidth']['item'][0] = ['bw'=>'47','bwscale'=>'Mb'];
-function mwexec($c,$q=false){ $GLOBALS['mwexec_log'][] = $c; return 0; } function mwexec_bg($c){}
+function mwexec($c,$q=false){ $GLOBALS['mwexec_log'][] = $c; if (isset($GLOBALS['mwexec_hook'])) { ($GLOBALS['mwexec_hook'])($c); } return 0; } function mwexec_bg($c){}
 $config["dnshaper"]["queue"][0]["bandwidth"]["item"][0] = ["bw"=>"500","bwscale"=>"Kb"];
 function get_real_interface($if) { return ['wan'=>'igb0','lan'=>'igb1','opt1'=>'igb1.10','opt2'=>'igb1.20','opt3'=>'igb1.30','opt5'=>'ovpnc1'][$if] ?? $if; }
 function pfSense_get_interface_stats($r) { $t = microtime(true) - 1794200000;
