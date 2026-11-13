@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+- Limiter Live: latency per interface, measured through each interface's own
+  qDefault queue (issue #4). Optional in the Class Generator (*Options*):
+  one floating match rule per interface (WAN side, direction out, ICMP echo
+  request from pfSense itself, own DSCP value from DSCP pool 2). The Autorate
+  service pings the Autorate targets ~5x/s per interface with that DSCP value
+  and a separate ICMP ID per interface. New panel with a WAN reference row,
+  average/P95 bar, queue delay (red above 25 ms) and a 2-minute sparkline;
+  status JSON contains `iflat`.
+- Class Generator preview shows direction, DSCP and destination *any*
+  correctly.
+
 ## 0.5.9
 - Generated rules keep their tracker ID and creation time when the classes
   are applied again, as long as the rule itself is unchanged. Before, every

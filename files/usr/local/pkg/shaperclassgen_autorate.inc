@@ -28,6 +28,8 @@ define('SCG_AR_LONG_HOURS', 48);
 /* Exklusiver Speedtest: urspruengliche Limiter-Bandbreiten waehrend des Tests */
 define('SCG_ST_SQUEEZE', '/var/run/scg_speedtest_squeeze.json');
 define('SCG_ST_SQUEEZE_KBIT', 8);   /* Speedtest: Regelung pausiert bis Zeitstempel */
+define('SCG_AR_LAT_MS', 200);       /* Latenz je Interface: ms zwischen zwei Pings eines Interfaces (5/s) */
+define('SCG_AR_LAT_ROTATE', 300);   /* s: neue ICMP-ID je Interface, damit ein alter State ohne Queue nicht bleibt */
 
 /* ------------------------------------------------------------------ */
 /* Einstellungen                                                       */
@@ -306,6 +308,12 @@ function scg_ar_status() {
 /* Pinger: Raw-ICMP-Socket, Fallback auf /sbin/ping                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Kanaele: 0 = Autorate-Pings (ohne Markierung, an keiner Queue vorbei),
+ * 1..n = Latenz je Interface mit eigenem TOS-Wert. Jeder Kanal hat eine
+ * eigene ICMP-ID: pf ordnet ICMP-States nach ID zu, mit gleicher ID wuerden
+ * die markierten Pings im State der unmarkierten landen (ohne Queue).
+ */
 class SCGPingerSocket {
 	public $ok = false;
 	public $err = '';
@@ -314,6 +322,8 @@ class SCGPingerSocket {
 	private $id;
 	private $seq = 0;
 	private $pending = array();
+	private $gen = array();       /* Kanal => Generation (neue ICMP-ID) */
+	private $tos = 0;             /* aktuell am Socket gesetzter TOS-Wert */
 
 	function __construct() {
 		if (!function_exists('socket_create')) {
@@ -330,6 +340,37 @@ class SCGPingerSocket {
 		$this->ok = true;
 	}
 
+	/* ICMP-ID je Kanal und Generation; Kanal 0 behaelt immer dieselbe ID */
+	function icmpId($ch) {
+		return ($this->id + $ch + 64 * ($this->gen[$ch] ?? 0)) & 0xffff;
+	}
+
+	/*
+	 * Neue Kanalliste (Kanal => TOS). Alle Kanaele bekommen eine neue ICMP-ID,
+	 * damit pf neue States anlegt, die die aktuellen Regeln durchlaufen.
+	 */
+	function channels($tos, $ips, $interval_ms) {
+		foreach ($this->pending as $k => $p) {
+			if ($p[1] > 0) {
+				unset($this->pending[$k]);
+			}
+		}
+		foreach (array_keys($tos) as $ch) {
+			$this->gen[$ch] = ($this->gen[$ch] ?? 0) + 1;
+		}
+	}
+
+	private function setTos($tos) {
+		if ($this->tos === $tos) {
+			return;
+		}
+		$lvl = defined('IPPROTO_IP') ? IPPROTO_IP : 0;
+		$opt = defined('IP_TOS') ? IP_TOS : (PHP_OS_FAMILY === 'Linux' ? 1 : 3);
+		if (@socket_set_option($this->sock, $lvl, $opt, $tos)) {
+			$this->tos = $tos;
+		}
+	}
+
 	static function cksum($d) {
 		if (strlen($d) % 2) {
 			$d .= "\0";
@@ -341,16 +382,22 @@ class SCGPingerSocket {
 		return ~$s & 0xffff;
 	}
 
-	function send($ip) {
+	function send($ip, $ch = 0, $tos = 0) {
+		$this->setTos($tos);
+		if ($this->tos !== $tos && $ch > 0) {
+			/* TOS laesst sich nicht setzen: unmarkiert senden wuerde an der Queue vorbei messen */
+			return;
+		}
+		$id = $this->icmpId($ch);
 		$this->seq = ($this->seq + 1) & 0xffff;
 		$payload = pack('J', hrtime(true)) . str_repeat("\0", 8);
-		$hdr = pack('CCnnn', 8, 0, 0, $this->id, $this->seq);
-		$pkt = pack('CCnnn', 8, 0, self::cksum($hdr . $payload), $this->id, $this->seq) . $payload;
-		$this->pending[$ip . '|' . $this->seq] = hrtime(true);
+		$hdr = pack('CCnnn', 8, 0, 0, $id, $this->seq);
+		$pkt = pack('CCnnn', 8, 0, self::cksum($hdr . $payload), $id, $this->seq) . $payload;
+		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), $ch, $ip);
 		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
 	}
 
-	/* Wartet hoechstens $us Mikrosekunden; liefert array(array(ip, rtt_ms), ...) */
+	/* Wartet hoechstens $us Mikrosekunden; liefert array(array(ip, rtt_ms, Sendezeit ns, Kanal), ...) */
 	function receive($us) {
 		$out = array();
 		$r = array($this->sock);
@@ -373,26 +420,27 @@ class SCGPingerSocket {
 				continue;
 			}
 			$h = unpack('Ctype/Ccode/ncks/nid/nseq', substr($buf, $ihl, 8));
-			if ($h['type'] != 0 || $h['id'] != $this->id) {
+			if ($h['type'] != 0) {
 				continue;
 			}
-			$k = $from . '|' . $h['seq'];
+			$k = $h['id'] . '|' . $from . '|' . $h['seq'];
 			if (isset($this->pending[$k])) {
-				/* ip, rtt_ms, Sendezeitpunkt (ns) */
-				$out[] = array($from, ($now - $this->pending[$k]) / 1e6, $this->pending[$k]);
+				/* ip, rtt_ms, Sendezeitpunkt (ns), Kanal */
+				$p = $this->pending[$k];
+				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1]);
 				unset($this->pending[$k]);
 			}
 		}
 		return $out;
 	}
 
-	/* Unbeantwortete Pings nach $ms als verloren werten */
+	/* Unbeantwortete Pings nach $ms als verloren werten: array(array(ip, Kanal), ...) */
 	function expire($ms) {
 		$lost = array();
 		$lim = hrtime(true) - $ms * 1e6;
-		foreach ($this->pending as $k => $t) {
-			if ($t < $lim) {
-				$lost[] = substr($k, 0, strpos($k, '|'));
+		foreach ($this->pending as $k => $p) {
+			if ($p[0] < $lim) {
+				$lost[] = array($p[2], $p[1]);
 				unset($this->pending[$k]);
 			}
 		}
@@ -404,19 +452,11 @@ class SCGPingerProc {
 	public $ok = false;
 	public $err = '';
 	public $mode = 'ping';
-	private $procs = array();
+	private $procs = array();     /* "Kanal|ip" => array(Prozess, Pipe, Puffer, Kanal) */
 
 	function __construct($ips, $interval_ms) {
-		$base = array('/sbin/ping', '-n', '-i', sprintf('%.2f', max(0.05, $interval_ms / 1000)));
-		if (file_exists('/usr/bin/stdbuf')) {
-			$base = array_merge(array('/usr/bin/stdbuf', '-oL'), $base);
-		}
 		foreach ($ips as $ip) {
-			$p = @proc_open(array_merge($base, array($ip)), array(1 => array('pipe', 'w'), 2 => array('file', '/dev/null', 'w')), $pipes);
-			if (is_resource($p)) {
-				stream_set_blocking($pipes[1], false);
-				$this->procs[$ip] = array($p, $pipes[1], '');
-			}
+			$this->spawn(0, $ip, 0, $interval_ms);
 		}
 		$this->ok = count($this->procs) > 0;
 		if (!$this->ok) {
@@ -424,7 +464,38 @@ class SCGPingerProc {
 		}
 	}
 
-	function send($ip) {
+	private function spawn($ch, $ip, $tos, $interval_ms) {
+		$base = array('/sbin/ping', '-n', '-i', sprintf('%.2f', max(0.05, $interval_ms / 1000)));
+		if ($tos) {
+			$base[] = '-z';
+			$base[] = (string)$tos;
+		}
+		if (file_exists('/usr/bin/stdbuf')) {
+			$base = array_merge(array('/usr/bin/stdbuf', '-oL'), $base);
+		}
+		$p = @proc_open(array_merge($base, array($ip)), array(1 => array('pipe', 'w'), 2 => array('file', '/dev/null', 'w')), $pipes);
+		if (is_resource($p)) {
+			stream_set_blocking($pipes[1], false);
+			$this->procs[$ch . '|' . $ip] = array($p, $pipes[1], '', $ch);
+		}
+	}
+
+	/* Kanaele 1..n neu starten (neuer Prozess = neue ICMP-ID); je Ziel ein ping, zusammen 1 Ping je $interval_ms */
+	function channels($tos, $ips, $interval_ms) {
+		foreach ($this->procs as $k => $p) {
+			if ($p[3] > 0) {
+				@proc_terminate($p[0]);
+				unset($this->procs[$k]);
+			}
+		}
+		foreach ($tos as $ch => $t) {
+			foreach ($ips as $ip) {
+				$this->spawn($ch, $ip, $t, $interval_ms * max(1, count($ips)));
+			}
+		}
+	}
+
+	function send($ip, $ch = 0, $tos = 0) {
 		/* ping sendet selbststaendig */
 	}
 
@@ -449,7 +520,7 @@ class SCGPingerProc {
 				$p[2] = substr($p[2], $pos + 1);
 				if (preg_match('/from ([\d.]+):.*time=([\d.]+) ms/', $line, $m)) {
 					/* ping misst selbst; Verzoegerungen beim Auslesen verfaelschen nichts */
-					$out[] = array($m[1], floatval($m[2]), null);
+					$out[] = array($m[1], floatval($m[2]), null, $p[3]);
 				}
 			}
 		}
@@ -503,6 +574,9 @@ class SCGAutorate {
 	public $rhistLen = 300;
 	public $cur = null;           /* laufende Sekunde */
 	public $samples = array();    /* letzte Rohproben array(t, rtt, delta) fuer Kennzahlen */
+	/* Latenz je Interface (durch dessen qDefault-Queue): Tag => Kanal */
+	public $lat = array();
+	public $latLen = 120;         /* Sekunden Verlauf je Interface */
 
 	/*
 	 * $saved = Inhalt der Gedaechtnisdatei: array('refl' => ip => Grundlatenz,
@@ -719,12 +793,99 @@ class SCGAutorate {
 		return (count($rec) > 1) ? $rec : null;
 	}
 
+	/*
+	 * Kanaele der Latenzmessung je Interface setzen: array(array('tag', 'if', 'tos'), ...).
+	 * Bleibt ein Interface mit demselben TOS-Wert, bleibt auch sein Verlauf.
+	 */
+	function setLatChannels($list) {
+		$new = array();
+		foreach ($list as $c) {
+			$old = $this->lat[$c['tag']] ?? null;
+			if ($old && $old['tos'] == $c['tos']) {
+				$old['if'] = $c['if'];
+				$new[$c['tag']] = $old;
+			} else {
+				$new[$c['tag']] = array('tag' => $c['tag'], 'if' => $c['if'], 'tos' => (int)$c['tos'],
+					'samples' => array(), 'hist' => array(), 'cur' => null);
+			}
+		}
+		$this->lat = $new;
+	}
+
+	function onLatRtt($tag, $rtt, $now) {
+		$this->latRecord($tag, $now, $rtt);
+	}
+
+	function onLatLost($tag, $now) {
+		$this->latRecord($tag, $now, null);
+	}
+
+	/* Probe eines Interfaces: Rohproben 10 s, Sekundenmittel fuer den Verlauf */
+	function latRecord($tag, $now, $rtt) {
+		if (!isset($this->lat[$tag])) {
+			return;
+		}
+		$c = &$this->lat[$tag];
+		$sec = (int)floor($now);
+		if ($c['cur'] === null || $c['cur'][0] != $sec) {
+			$this->latFlush($c);
+			$c['cur'] = array($sec, 0.0, 0, 0);
+		}
+		if ($rtt === null) {
+			$c['cur'][3]++;
+		} else {
+			$c['cur'][1] += $rtt;
+			$c['cur'][2]++;
+		}
+		$c['samples'][] = array($now, $rtt);
+		while ($c['samples'] && $c['samples'][0][0] < $now - 10) {
+			array_shift($c['samples']);
+		}
+		unset($c);
+	}
+
+	/* Sekundenwert [t, Mittel ms oder null, verloren] in den Verlauf */
+	private function latFlush(&$c) {
+		if ($c['cur'] === null) {
+			return;
+		}
+		$k = $c['cur'];
+		$c['hist'][] = array($k[0], $k[2] ? round($k[1] / $k[2], 1) : null, $k[3]);
+		while (count($c['hist']) > $this->latLen) {
+			array_shift($c['hist']);
+		}
+		$c['cur'] = null;
+	}
+
+	/* Status je Interface; vergangene Sekunden werden dabei abgeschlossen */
+	function latStatus($now = null) {
+		$now = $now ?? microtime(true);
+		$out = array();
+		foreach ($this->lat as $tag => &$c) {
+			if ($c['cur'] !== null && $c['cur'][0] < (int)floor($now)) {
+				$this->latFlush($c);
+			}
+			while ($c['samples'] && $c['samples'][0][0] < $now - 10) {
+				array_shift($c['samples']);
+			}
+			$out[] = array('tag' => (string)$tag, 'if' => $c['if'], 'tos' => sprintf('0x%02x', $c['tos']),
+				'stats' => self::sampleStats($c['samples']), 'hist' => $c['hist']);
+		}
+		unset($c);
+		return $out;
+	}
+
 	/* Kennzahlen der letzten 10 s: Mittel, 95-%-Wert, Jitter, Verlust */
 	function stats() {
+		return self::sampleStats($this->samples);
+	}
+
+	/* $samples = array(array(t, rtt oder null bei Verlust, ...), ...) */
+	static function sampleStats($samples) {
 		$r = array();
 		$lost = 0;
 		$jit = 0.0;
-		foreach ($this->samples as $s) {
+		foreach ($samples as $s) {
 			if ($s[1] === null) {
 				$lost++;
 				continue;
@@ -971,7 +1132,8 @@ class SCGAutorate {
 			'window' => "{$n}/" . count($this->window), 'threshold' => floatval($this->cfg['threshold']),
 			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'discarded' => $this->discarded,
 			'source' => $this->source, 'pid' => getmypid(), 'control' => $this->control, 'paused' => $this->paused,
-			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats());
+			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats(),
+			'iflat' => $this->latStatus(), 'iflat_class' => SCG_LAT_CLASS);
 	}
 }
 
@@ -1120,6 +1282,11 @@ function scg_ar_run() {
 	$last_rx_end = null;
 	$stall_end = null;
 	$cfg_mtime = null;
+	/* Latenz je Interface: Kanal (1..n) => array('tag', 'tos', 'next', 'i') */
+	$latch = array();
+	$latsig = null;
+	$next_rotate = 0;
+	$lat_iv = SCG_AR_LAT_MS / 1000;
 
 	while (true) {
 		$now = microtime(true);
@@ -1133,7 +1300,8 @@ function scg_ar_run() {
 			$cfile = (isset($g['conf_path']) ? $g['conf_path'] : '/cf/conf') . '/config.xml';
 			clearstatcache(true, $cfile);
 			$mt = @filemtime($cfile);
-			if ($mt !== false && $cfg_mtime !== null && $mt != $cfg_mtime && function_exists('parse_config')) {
+			$cfg_changed = ($mt !== false && $cfg_mtime !== null && $mt != $cfg_mtime);
+			if ($cfg_changed && function_exists('parse_config')) {
 				global $config;
 				$fresh = @parse_config(true);
 				if (is_array($fresh) && !empty($fresh)) {
@@ -1147,6 +1315,27 @@ function scg_ar_run() {
 			$ar->resolve($pname);
 			$wan = scg_ar_wan($cfg);
 			$ar->source = $wan ? array('kind' => 'iface', 'descr' => $wan[2], 'real' => $wan[1]) : array('kind' => 'limiter');
+			/*
+			 * Latenz je Interface: Kanaele aus den erzeugten Regeln. Bei jeder
+			 * Konfigurationsaenderung und alle 5 min neue ICMP-IDs, damit ein
+			 * State, der vor der Regel entstand (ohne Queue), nicht bestehen bleibt.
+			 */
+			$cl = scg_latprobe_channels();
+			$sig = json_encode($cl);
+			if ($sig !== $latsig || $cfg_changed || $now >= $next_rotate) {
+				$latch = array();
+				$tos = array();
+				$ch = 1;
+				foreach ($cl as $c) {
+					$latch[$ch] = array('tag' => $c['tag'], 'tos' => $c['tos'], 'next' => $now + $lat_iv * $ch / (count($cl) + 1), 'i' => $ch);
+					$tos[$ch] = $c['tos'];
+					$ch++;
+				}
+				$pinger->channels($tos, $ips, SCG_AR_LAT_MS);
+				$ar->setLatChannels($cl);
+				$latsig = $sig;
+				$next_rotate = $now + SCG_AR_LAT_ROTATE;
+			}
 			$next_resolve = $now + 30;
 		}
 		/*
@@ -1166,18 +1355,39 @@ function scg_ar_run() {
 				$next_ping[$ip] = max($t + $interval, $now);
 			}
 		}
-		$wake = min(min($next_ping), $next_tick);
+		/* Latenz je Interface; waehrend eines Speedtests nicht (Limiter evtl. gedrosselt) */
+		$lat_wake = $next_tick;
+		if (!$ar->paused) {
+			foreach ($latch as $ch => &$c) {
+				if ($now >= $c['next']) {
+					$pinger->send($ips[$c['i']++ % count($ips)], $ch, $c['tos']);
+					$c['next'] = max($c['next'] + $lat_iv, $now);
+				}
+				$lat_wake = min($lat_wake, $c['next']);
+			}
+			unset($c);
+		}
+		$wake = min(min($next_ping), $next_tick, $lat_wake);
 		$wait = max(0, (int)(($wake - microtime(true)) * 1e6));
 		foreach ($pinger->receive($wait) as $res) {
 			if ($res[2] !== null && $stall_end !== null && $res[2] < $stall_end) {
 				$ar->discarded++;
 				continue;
 			}
-			$ar->onRtt($res[0], $res[1], microtime(true));
+			$ch = $res[3] ?? 0;
+			if ($ch == 0) {
+				$ar->onRtt($res[0], $res[1], microtime(true));
+			} elseif (isset($latch[$ch])) {
+				$ar->onLatRtt($latch[$ch]['tag'], $res[1], microtime(true));
+			}
 		}
 		$last_rx_end = hrtime(true);
-		foreach ($pinger->expire(2000) as $ip) {
-			$ar->onLost($ip, microtime(true));
+		foreach ($pinger->expire(2000) as $l) {
+			if ($l[1] == 0) {
+				$ar->onLost($l[0], microtime(true));
+			} elseif (isset($latch[$l[1]])) {
+				$ar->onLatLost($latch[$l[1]]['tag'], microtime(true));
+			}
 		}
 		$now = microtime(true);
 		if ($now >= $next_tick) {
