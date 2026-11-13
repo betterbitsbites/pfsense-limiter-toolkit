@@ -31,7 +31,8 @@ History of changes: `CHANGELOG.md`.
   affected limiters and loads their lines from `/tmp/rules.limiter` in the
   order **queues first, then pipe/sched** (a queue without scheduler gets
   its AQM unchecked and is attached when the scheduler is created; pfSense's
-  own order pipe → sched → queue loses that race under load). Running
+  own order pipe → sched → queue loses that race under load; reloading
+  unchanged limiters keeps CoDel, tested under load). Running
   bandwidth goes into the pipe line. Called after apply and from Limiter Live.
   Autorate only changes limiters (pipes), never queues.
 - Limiter Live: queues sorted by weight; interfaces grouped

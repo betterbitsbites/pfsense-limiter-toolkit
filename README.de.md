@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.4)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.5)
 
 [English](README.md) · Deutsch
 
@@ -255,10 +255,9 @@ nicht. Das Paket bietet deshalb vier Wege, die sich kombinieren lassen:
   anlegen*, wenn Queues ohne AQM laufen (auch nach Änderungen unter *Firewall >
   Traffic Shaper > Limiters*). `dnctl queue show` zeigt den Zustand am Ende
   jeder Queue-Zeile: `AQM CoDel …` = aktiv, `droptail` = kein AQM, nichts =
-  konfiguriert, aber nicht aktiv. Jeder Filter-Reload (auch bei Regel- oder
-  Alias-Änderungen) lädt alle Limiter neu; bei ruhiger Leitung bleibt CoDel
-  erhalten, unter Last kann es genauso verloren gehen – Limiter Live zeigt
-  dann die Warnung.
+  konfiguriert, aber nicht aktiv. Beim Neuladen unveränderter Queues (Regel-
+  oder Alias-Änderungen, *Filter Reload*) erscheint die Meldung auch, CoDel
+  bleibt dabei aber erhalten.
 - Das Paket kommt nicht aus dem Netgate-Repository. Nach einem pfSense-Update
   ggf. `sh install.sh` erneut ausführen.
 

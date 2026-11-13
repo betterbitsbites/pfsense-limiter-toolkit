@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5
+- README: corrected the note added in 0.6.4. A filter reload or rule/alias
+  change under load keeps CoDel; only changed queues or limiters lose it,
+  and the Class Generator repairs those since 0.6.4 (tested under load:
+  *Filter Reload* and *Generate / Update* with a changed weight keep CoDel
+  on all queues).
+
 ## 0.6.4
 - Re-creating limiters (0.6.3) now loads the queues *before* the limiter.
   In pfSense's order (limiter, scheduler, queues) the first packet that

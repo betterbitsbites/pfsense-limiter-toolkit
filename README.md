@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.4) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.5) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -221,9 +221,8 @@ Status > Speedtest measures the raw line from pfSense itself, by default every
   are without AQM (also after changes in *Firewall > Traffic Shaper >
   Limiters*). `dnctl queue show` shows the state at the end of each queue line:
   `AQM CoDel …` = active, `droptail` = no AQM, nothing = configured but not
-  active. Every filter reload (also rule or alias changes) reloads all
-  limiters; on a quiet line CoDel stays, under load it can be lost the same
-  way, and Limiter Live then shows the warning.
+  active. Reloading unchanged queues (rule or alias changes, *Filter Reload*)
+  also logs the message but keeps CoDel.
 
 ## License
 
