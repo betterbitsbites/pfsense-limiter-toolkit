@@ -35,9 +35,12 @@ require_once("/usr/local/pkg/shaperclassgen_autorate.inc");
  * gespeicherte, aber noch nicht erzeugte Aenderungen zu erkennen.
  */
 function scg_live_cfg() {
-	$c = array('factors' => array(), 'shaped' => array(), 'down' => array(), 'up' => array(), 'ew' => array(), 'lang' => scg_lang());
+	$c = array('factors' => array(), 'shaped' => array(), 'down' => array(), 'up' => array(), 'ew' => array(), 'ifdescr' => array(),
+		'latprobe' => false, 'lang' => scg_lang());
 	$set = scg_load_settings();
+	$c['latprobe'] = !empty($set['latprobe']);
 	$classes = scg_classes($set);
+	$descr = get_configured_interface_with_descr();
 	foreach ((array)($set['vlans'] ?? array()) as $v) {
 		if (empty($v['enable']) || empty($v['tag'])) {
 			continue;
@@ -45,6 +48,7 @@ function scg_live_cfg() {
 		$f = floatval($v['factor']);
 		$c['factors'][$v['tag']] = $f;
 		$c['shaped'][$v['if']] = $v['tag'];
+		$c['ifdescr'][$v['tag']] = $descr[$v['if']] ?? $v['if'];
 		if (!empty($v['down'])) {
 			$c['down'][$v['down']] = true;
 		}
@@ -61,7 +65,7 @@ function scg_live_cfg() {
 			$c[$d][$set['autorate'][$d]['pipe']] = true;
 		}
 	}
-	foreach (array('factors', 'shaped', 'down', 'up', 'ew') as $k) {
+	foreach (array('factors', 'shaped', 'down', 'up', 'ew', 'ifdescr') as $k) {
 		$c[$k] = (object)$c[$k];
 	}
 	return $c;
@@ -165,6 +169,16 @@ if ($expire !== null && $expire !== 0) {
 	.scg-kpi { display: inline-block; margin-right: 18px; }
 	.scg-kpi b { font-size: 120%; }
 	.scg-toggle { font-weight: normal; margin: 0; font-size: 85%; }
+	.scg-ilat td { vertical-align: middle !important; }
+	.scg-ilat tr.scg-ref td { border-bottom: 2px solid rgba(128,128,128,.35); }
+	.scg-lbar { position: relative; height: 14px; min-width: 140px; background: rgba(128,128,128,.14); border-radius: 3px; overflow: hidden; }
+	.scg-lbar > .p95 { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(59,143,217,.35); transition: width .4s; }
+	.scg-lbar > .avg { position: absolute; left: 0; top: 0; bottom: 0; background: #3b8fd9; transition: width .4s; }
+	.scg-ref .scg-lbar > .p95 { background: rgba(154,164,178,.4); }
+	.scg-ref .scg-lbar > .avg { background: #9aa4b2; }
+	.scg-ispark { width: 120px; height: 24px; display: block; }
+	.scg-ispark path { fill: none; stroke: #3b8fd9; stroke-width: 1.3; }
+	.scg-ref .scg-ispark path { stroke: #9aa4b2; }
 </style>
 
 <div class="panel panel-default">
@@ -202,6 +216,7 @@ if ($expire !== null && $expire !== 0) {
 <div id="scg_combined"></div>
 <div id="scg_long"></div>
 <div id="scg_latency"></div>
+<div id="scg_iflat"></div>
 <div id="scg_autorate"></div>
 <div id="scg_ifaces"></div>
 <div id="scg_matrix"></div>
@@ -231,6 +246,7 @@ events.push(function() {
 	$('#scg_idleifs').prop('checked', load('idleifs') === '1');
 	$('#scg_showvpn').prop('checked', load('showvpn') !== '0');
 	var showMatrix = load('matrix') !== '0';
+	var showIfaces = load('ifaces') !== '0';
 	$('#scg_interval, #scg_unit').on('change', function() { store(this.id.replace('scg_', ''), $(this).val()); });
 	$('#scg_hideidle, #scg_idleifs, #scg_showvpn').on('change', function() { store(this.id.replace('scg_', ''), this.checked ? '1' : '0'); });
 
@@ -242,6 +258,7 @@ events.push(function() {
 	function applyCfg(c) {
 		if (!c) return;
 		FACTORS = c.factors; SHAPED = c.shaped; DOWNPIPES = c.down; UPPIPES = c.up; EW = c.ew;
+		CFG = c;
 		$('#scg_cfghint').html(c.lang !== LANG_AT_LOAD ? '<div class="alert alert-info" style="margin-bottom:10px">' +
 			t('The language setting changed. Reload the page to switch the texts.') + '</div>' : '');
 	}
@@ -768,6 +785,99 @@ events.push(function() {
 		$('#scg_longh').on('change', function() { store('longh', this.value); longData = null; fetchLong(); });
 	}
 
+	/*
+	 * Latenz je Interface: Pings der pfSense mit eigenem DSCP-Wert je Interface,
+	 * die eine Match-Regel auf dem WAN in die gewaehlte Queue des Interfaces legt
+	 * (Klasse im Class Generator, Standard: interaktive Klasse).
+	 * WAN-Zeile = dieselben Ziele ohne Queue (die Leitung selbst). Wartezeit in
+	 * der Queue = Interface-Latenz minus WAN-Referenz.
+	 */
+	var IFLAT_HOT = 25;
+	function renderIfLat(data) {
+		var a = data.autorate;
+		if (!a || !a.iflat || !a.iflat.length) {
+			$('#scg_iflat').html(a && CFG.latprobe ? '<div class="panel panel-default"><div class="panel-body text-muted">' +
+				t('Latency per interface: no probe rules are active yet. Click "Generate / Update" in the Class Generator.') + '</div></div>' : '');
+			return;
+		}
+		var cls = a.iflat_class || '';
+		/* Gewicht der gemessenen Queue aus den laufenden Queues, sonst erwartetes Gewicht */
+		var wq = {};
+		data.pipes.forEach(function(p) {
+			p.queues.forEach(function(q) {
+				var m = /^([DU])_([A-Za-z0-9]+)_([A-Za-z0-9]+)$/.exec(q.name);
+				if (m && (m[1] === 'D' || wq[m[2] + '|' + m[3]] === undefined)) wq[m[2] + '|' + m[3]] = q.weight;
+			});
+		});
+		var N = 120, now = 0;
+		var wanHist = (a.hist || []).slice(-N).map(function(r) { return [r[0], r[2]]; });
+		if (wanHist.length) now = wanHist[wanHist.length - 1][0];
+		var ws = a.stats || {};
+		var rows = [{ ref: true, name: 'WAN', sub: t('reference, no queue'), weight: null, avg: ws.avg, p95: ws.p95, loss: ws.loss, hist: wanHist }];
+		var list = a.iflat.map(function(c) {
+			var st = c.stats || {};
+			c.hist.forEach(function(r) { if (r[0] > now) now = r[0]; });
+			var cc = c['class'] || cls;
+			var w = wq[c.tag + '|' + cc] !== undefined ? wq[c.tag + '|' + cc] : (EW[c.tag] ? EW[c.tag][cc] : undefined);
+			return { ref: false, tag: c.tag, name: CFG.ifdescr[c.tag] || c.tag, sub: c.tag + ' &middot; DSCP ' + c.tos, weight: w === undefined ? null : w,
+				avg: st.avg, p95: st.p95, loss: st.loss, n: st.n, hist: c.hist.map(function(r) { return [r[0], r[1]]; }) };
+		});
+		list.sort(function(x, y) { return ((y.weight || 0) - (x.weight || 0)) || x.name.localeCompare(y.name); });
+		rows = rows.concat(list);
+		/* Gemeinsame Skala fuer Balken und Verlaeufe, damit die Zeilen vergleichbar sind */
+		var smax = 0, hmax = 0;
+		rows.forEach(function(r) {
+			if (r.p95 !== null && r.p95 !== undefined && r.p95 > smax) smax = r.p95;
+			if (r.avg !== null && r.avg !== undefined && r.avg > smax) smax = r.avg;
+			r.hist.forEach(function(h) { if (h[1] !== null && h[1] > hmax) hmax = h[1]; });
+		});
+		smax = Math.max(20, smax * 1.1);
+		hmax = Math.max(20, hmax * 1.1);
+		function spark(hist) {
+			var W = 120, H = 24, d = '', last = null;
+			hist.forEach(function(h) {
+				if (h[0] <= now - N || h[1] === null) { last = null; return; }
+				var x = (W * (1 - (now - h[0]) / (N - 1))).toFixed(1), y = (H - 1 - Math.min(1, h[1] / hmax) * (H - 2)).toFixed(1);
+				d += (last === null || h[0] - last > 2 ? ' M' : ' L') + x + ',' + y;
+				last = h[0];
+			});
+			return '<svg class="scg-ispark" viewBox="0 0 120 24" preserveAspectRatio="none">' + (d ? '<path d="' + d + '"/>' : '') + '</svg>';
+		}
+		function ms(v) { return v === null || v === undefined ? '–' : v.toFixed(1); }
+		var h = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + t('Latency per interface') +
+			' <small>' + t('pings through the %s queue of each interface, last 10 s', esc(cls)) + '</small></h2></div>' +
+			'<div class="table-responsive panel-body"><table class="table table-condensed scg-ilat" style="margin-bottom:0"><thead><tr>' +
+			'<th>Interface</th><th class="scg-num">' + t('Weight') + '</th><th style="width:30%">' + t('Latency') + '</th>' +
+			'<th class="scg-num">' + t('Avg ms') + '</th><th class="scg-num">P95 ms</th><th class="scg-num">' + t('Queue delay') + '</th>' +
+			'<th>' + t('Last 2 min') + '</th></tr></thead><tbody>';
+		rows.forEach(function(r) {
+			var pa = r.avg === null || r.avg === undefined ? 0 : Math.min(100, r.avg / smax * 100);
+			var pp = r.p95 === null || r.p95 === undefined ? 0 : Math.min(100, r.p95 / smax * 100);
+			var qd = '–', hot = false;
+			if (!r.ref) {
+				if (r.avg !== null && r.avg !== undefined && ws.avg !== null && ws.avg !== undefined) {
+					var dv = r.avg - ws.avg;
+					hot = dv > IFLAT_HOT;
+					qd = (dv >= 0 ? '+' : '') + dv.toFixed(1) + ' ms';
+				}
+			} else {
+				qd = '<small class="text-muted">' + t('reference') + '</small>';
+			}
+			var loss = r.loss ? ' <small class="' + (r.loss >= 5 ? 'scg-hot' : 'text-muted') + '">' + t('Loss') + ' ' + r.loss + ' %' + '</small>' : '';
+			var wb = r.weight === null ? '<span class="text-muted">–</span>' : '<span class="label label-default">' + r.weight + '</span>';
+			h += '<tr class="' + (r.ref ? 'scg-ref' : '') + '"><td><b>' + esc(r.name) + '</b> <small class="text-muted">' + (r.ref ? esc(r.sub) : r.sub) + '</small></td>' +
+				'<td class="scg-num">' + wb + '</td>' +
+				'<td><div class="scg-lbar" title="' + esc(t('solid = average, light = P95')) + '"><span class="p95" style="width:' + pp.toFixed(1) + '%"></span>' +
+				'<span class="avg" style="width:' + pa.toFixed(1) + '%"></span></div></td>' +
+				'<td class="scg-num">' + ms(r.avg) + loss + '</td><td class="scg-num">' + ms(r.p95) + '</td>' +
+				'<td class="scg-num' + (hot ? ' scg-hot' : '') + '">' + qd + '</td><td>' + spark(r.hist) + '</td></tr>';
+		});
+		h += '</tbody></table><p class="help-block" style="margin:6px 0 0">' +
+			t('Queue delay = latency of the interface minus the WAN reference (same targets, no queue). Under load, interfaces with a higher weight should show a smaller queue delay. Red above %s ms.', IFLAT_HOT) +
+			(a.paused ? ' <b>' + t('Paused during the speed test.') + '</b>' : '') + '</p></div></div>';
+		$('#scg_iflat').html(h);
+	}
+
 	function renderAutorate(data) {
 		var a = data.autorate;
 		if (!a || !a.control || !a.dirs || !Object.keys(a.dirs).length) { $('#scg_autorate').html(''); return; }
@@ -827,6 +937,10 @@ events.push(function() {
 	 */
 	function renderIfaces(data) {
 		if (!data.ifaces || !data.ifaces.length) { $('#scg_ifaces').html(''); return; }
+		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
+			'<small>' + t('Download / upload as seen from the internet') + '</small>' +
+			'<label class="pull-right scg-toggle"><input type="checkbox" id="scg_ifaces_show"' + (showIfaces ? ' checked' : '') + '> ' + t('Show') + '</label></h2></div>';
+		if (!showIfaces) { $('#scg_ifaces').html(head + '</div>'); return; }
 		var showIdle = $('#scg_idleifs').prop('checked'), showVpn = $('#scg_showvpn').prop('checked');
 		var groups = { wan: [], vpn: [], shaped: [], unshaped: [] };
 		var wanDown = 0, wanUp = 0, haveWan = false;
@@ -876,8 +990,7 @@ events.push(function() {
 				'<td class="scg-num' + (unDown > 0.1 * wanDown && unDown > 1e6 ? ' scg-hot' : '') + '">' + fmtRate(unDown) + '</td>' +
 				'<td class="scg-num' + (unUp > 0.1 * wanUp && unUp > 1e6 ? ' scg-hot' : '') + '">' + fmtRate(unUp) + '</td></tr>';
 		}
-		$('#scg_ifaces').html('<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
-			'<small>' + t('Download / upload as seen from the internet') + '</small></h2></div><div class="table-responsive panel-body">' +
+		$('#scg_ifaces').html(head + '<div class="table-responsive panel-body">' +
 			'<table class="table table-condensed" style="margin-bottom:0"><thead><tr><th>Interface</th><th>' + t('Type') + '</th>' +
 			'<th class="scg-num">&darr; Download</th><th class="scg-num">&uarr; Upload</th></tr></thead><tbody>' + rows + summary +
 			'</tbody></table></div></div>');
@@ -886,6 +999,7 @@ events.push(function() {
 	function renderAll(data) {
 		renderCombined(data);
 		renderLatency(data);
+		renderIfLat(data);
 		renderAutorate(data);
 		renderIfaces(data);
 		renderMatrix(data);
@@ -911,6 +1025,12 @@ events.push(function() {
 	}
 	$('#scg_interval').on('change', schedule);
 	$('#scg_hideidle, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); } });
+	/* Interfaces ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
+	$(document).on('change', '#scg_ifaces_show', function() {
+		showIfaces = this.checked;
+		store('ifaces', showIfaces ? '1' : '0');
+		if (prev) renderIfaces(prev);
+	});
 	/* Matrix ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
 	$(document).on('change', '#scg_matrix_show', function() {
 		showMatrix = this.checked;

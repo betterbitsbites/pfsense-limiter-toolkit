@@ -23,7 +23,7 @@ require_once("shaper.inc");
 require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
-define('SCG_VERSION', '0.5.9');
+define('SCG_VERSION', '0.6.0');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
@@ -157,6 +157,7 @@ function scg_switch_scheme($s, $to) {
 	foreach ($s['others'] as $k => $c) {
 		$s['others'][$k] = ($c === '') ? '' : ($map[$c] ?? '');
 	}
+	$s['latclass'] = $map[$s['latclass'] ?? ''] ?? '';
 	$s['scheme'] = $to;
 	return $s;
 }
@@ -442,6 +443,8 @@ function scg_default_settings($scheme = 'simple') {
 		'others' => array(),
 		'srcports' => false,
 		'ecn' => false,
+		'latprobe' => false,
+		'latclass' => '',
 		'aliasname' => 'SCG_LOCALNETS',
 		'devudp' => true,
 		'gamenets' => array(),
@@ -837,8 +840,102 @@ function scg_make_rule($v, $cls, $s, $descr, $proto = null, $ipproto = 'inet46',
 	return $r;
 }
 
+/*
+ * Latenzmessung je Interface: Der Autorate-Dienst pingt fuer jedes geshapte
+ * Interface mit einem eigenen DSCP-Wert. Eine Floating-Match-Regel auf den
+ * WAN-Interfaces (Richtung out, Quelle = pfSense selbst) legt diese Pings in
+ * die gewaehlte Queue des Interfaces (scg_latprobe_class); die Antworten
+ * folgen dem State.
+ * DSCP-Werte aus Pool 2 (xxxx11, RFC 2474: experimentell/lokal), damit sie
+ * nicht mit ueblichen Markierungen kollidieren. Als TOS-Byte, ECN-Bits 0.
+ */
+/*
+ * Klasse, durch die die Latenzmessung laeuft: gewaehlt oder die interaktive
+ * Klasse des Schemas. Zeigt, was bevorzugter Verkehr unter Last erlebt.
+ */
+function scg_latprobe_class($s) {
+	$c = (string)($s['latclass'] ?? '');
+	if ($c !== '' && isset(scg_classes(scg_scheme($s))[$c])) {
+		return $c;
+	}
+	return scg_role_class(scg_scheme($s), 'interactive');
+}
+
+function scg_latprobe_tos_pool() {
+	$out = array();
+	for ($dscp = 3; $dscp < 64; $dscp += 4) {
+		$out[] = sprintf('0x%02x', $dscp << 2);
+	}
+	return $out;
+}
+
+/* Interfaces mit Gateway (WAN, VPN-Clients): dort verlassen die Pings die pfSense */
+function scg_wan_interfaces() {
+	$out = array();
+	foreach (array_keys(get_configured_interface_with_descr()) as $if) {
+		if (scg_if_is_wan($if)) {
+			$out[] = $if;
+		}
+	}
+	return $out;
+}
+
+function scg_latprobe_rule($v, $wanifs, $tos, $cls) {
+	return array(
+		'type' => 'match',
+		'interface' => implode(',', $wanifs),
+		'ipprotocol' => 'inet',
+		'protocol' => 'icmp',
+		'icmptype' => 'echoreq',
+		'direction' => 'out',
+		'floating' => 'yes',
+		'statetype' => 'keep state',
+		'source' => array('network' => '(self)'),
+		'destination' => array('any' => ''),
+		'dscp' => $tos,
+		'descr' => scg_rule_descr($v['tag'], $cls, 'Latency probe'),
+		/* Richtung out auf dem WAN = Upload; Antworten = Download */
+		'dnpipe' => scg_qname('up', $v['tag'], $cls),
+		'pdnpipe' => scg_qname('down', $v['tag'], $cls),
+		'scg' => 'yes',
+	);
+}
+
+/*
+ * Messkanaele aus den tatsaechlich erzeugten Regeln (nicht aus den
+ * gespeicherten Einstellungen): nur was angewendet ist, wird gemessen.
+ * Liefert array(array('tag', 'if', 'tos' (int), 'class'), ...) in Regelreihenfolge.
+ */
+function scg_latprobe_channels() {
+	$ifs = array();
+	$set = scg_load_settings();
+	foreach ((array)($set['vlans'] ?? array()) as $v) {
+		if (!empty($v['tag'])) {
+			$ifs[$v['tag']] = $v['if'];
+		}
+	}
+	$out = array();
+	$seen = array();
+	foreach ((array)scg_cfg_get('filter/rule', array()) as $r) {
+		if (!scg_is_generated_rule($r) || empty($r['dscp']) || ($r['direction'] ?? '') !== 'out' || isset($r['disabled'])) {
+			continue;
+		}
+		if (!preg_match('/^U_([A-Za-z0-9]+)_(q[A-Za-z0-9]+)$/', (string)($r['dnpipe'] ?? ''), $m) ||
+		    !preg_match('/^0x([0-9a-f]{2})$/i', (string)$r['dscp'], $t)) {
+			continue;
+		}
+		$tos = hexdec($t[1]);
+		if ($tos == 0 || isset($seen[$tos])) {
+			continue;
+		}
+		$seen[$tos] = true;
+		$out[] = array('tag' => $m[1], 'if' => $ifs[$m[1]] ?? '', 'tos' => $tos, 'class' => $m[2]);
+	}
+	return $out;
+}
+
 function scg_build_plan($s) {
-	$plan = array('queues' => array(), 'rules' => array(), 'perif' => array(), 'aliases' => array());
+	$plan = array('queues' => array(), 'rules' => array(), 'perif' => array(), 'aliases' => array(), 'probes' => array(), 'notes' => array());
 	$sch = scg_scheme($s);
 	$asns = scg_gamenet_asns($s);
 	foreach ($asns as $n => $lbl) {
@@ -926,6 +1023,28 @@ function scg_build_plan($s) {
 		$plan['perif'][$v['if']] = count($rules);
 		$plan['rules'] = array_merge($plan['rules'], $rules);
 	}
+	/* 4. Latenzmessung je Interface: eine Regel pro Interface am Ende des Blocks */
+	if (!empty($s['latprobe'])) {
+		$wanifs = scg_wan_interfaces();
+		$pool = scg_latprobe_tos_pool();
+		$lcls = scg_latprobe_class($s);
+		$k = 0;
+		foreach ($s['vlans'] as $v) {
+			if (empty($v['enable'])) {
+				continue;
+			}
+			if (!$wanifs) {
+				$plan['notes'][] = scg_t('Latency per interface: no interface with a gateway found, no probe rules created.');
+				break;
+			}
+			if ($k >= count($pool)) {
+				$plan['notes'][] = scg_t('Latency per interface: only the first %d interfaces are measured.', count($pool));
+				break;
+			}
+			$plan['probes'][$v['tag']] = $pool[$k];
+			$plan['rules'][] = scg_latprobe_rule($v, $wanifs, $pool[$k++], $lcls);
+		}
+	}
 	return $plan;
 }
 
@@ -969,7 +1088,7 @@ function scg_strip(&$pipes, &$rules, &$oldnums) {
  */
 function scg_rule_identity($r) {
 	$keys = array('type', 'interface', 'ipprotocol', 'protocol', 'icmptype', 'direction',
-		'floating', 'source', 'destination', 'dnpipe', 'pdnpipe', 'descr');
+		'floating', 'source', 'destination', 'dscp', 'dnpipe', 'pdnpipe', 'descr');
 	$f = array();
 	foreach ($keys as $k) {
 		if (isset($r[$k])) {
@@ -1141,6 +1260,9 @@ function scg_apply($s, &$errors, &$msgs) {
 		return false;
 	}
 	scg_prefetch_urltables($plan, $msgs);
+	foreach ($plan['notes'] as $n) {
+		$msgs[] = $n;
+	}
 	$pipes = scg_cfg_get('dnshaper/queue', array());
 	$rules = scg_cfg_get('filter/rule', array());
 	if (!is_array($pipes)) {

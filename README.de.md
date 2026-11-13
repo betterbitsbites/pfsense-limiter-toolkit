@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.5.9)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.0)
 
 [English](README.md) · Deutsch
 
@@ -84,6 +84,35 @@ Die Seite funktioniert mit beliebigen Limitern, auch ohne den Generator.
 Für stabile Werte muss `net.inet.ip.dummynet.expire=0` gesetzt sein, sonst
 löscht dummynet kurz leere Queues samt Zählern. Die Seite bietet dafür einen
 Knopf an (setzt den Wert sofort und als System Tunable).
+
+### Latenz je Interface
+
+Zeigt, ob Interfaces mit höherem Gewicht unter Last wirklich eine niedrigere
+Latenz bekommen. Die normale Latenzmessung läuft von der pfSense selbst und
+passiert nie einen Limiter, sie zeigt also nur die Leitung. Mit
+*Klassen-Generator > Optionen > Latenz je Interface messen* (und Erzeugen):
+
+- Jedes geshapte Interface bekommt einen eigenen DSCP-Wert (DSCP-Pool 2,
+  `xxxx11`, für lokale Nutzung reserviert; höchstens 16 Interfaces) und eine
+  Floating-Match-Regel: Interfaces mit Gateway, Richtung *out*, ICMP Echo
+  Request von *This firewall (self)* mit diesem DSCP-Wert →
+  `U_<Kürzel>_<Klasse>` / `D_<Kürzel>_<Klasse>`.
+- Die Queue ist neben der Option wählbar. Standard ist die interaktive
+  Klasse (qInteractive, bei 7 Klassen qOthersHigh): Der Vergleich soll zeigen,
+  wie gut der Shaper bevorzugten Verkehr schützt. Die Echtzeit-Klasse zeigt
+  den besten Fall, qDefault den gewöhnlichen Verkehr. Beim Wechsel des
+  Schemas wird die Wahl mit den übrigen Klassen umgeschlüsselt.
+- Der Autorate-Dienst (auch im reinen Messbetrieb) pingt die Autorate-Ziele
+  je Interface etwa 5-mal pro Sekunde mit diesem DSCP-Wert und eigener
+  ICMP-ID; pf legt dafür einen eigenen State an, der durch die gewählte Queue
+  des Interfaces läuft. Die ID wechselt alle 5 Minuten und nach
+  Konfigurationsänderungen, damit ein State, der vor der Regel entstand,
+  nicht bleibt. Last: wenige kbit/s je Interface. Während Speedtests
+  pausiert.
+- Limiter Live zeigt je Interface eine Zeile, nach Gewicht sortiert, dazu
+  eine WAN-Referenzzeile (gleiche Ziele, ohne Queue): Mittel und P95 der
+  letzten 10 s, *Wartezeit Queue* = Interface-Latenz minus WAN-Referenz (rot
+  ab 25 ms) und ein Verlauf der letzten 2 Minuten.
 
 ## Autorate
 
@@ -200,6 +229,9 @@ nicht. Das Paket bietet deshalb vier Wege, die sich kombinieren lassen:
   Out `D_ILAN_qGames`.
 - Alias `SCG_LOCALNETS` (RFC1918, ULA, Link-Local, Multicast): dieser Verkehr
   wird nie geshapt, Inter-VLAN bleibt also frei.
+- Optional (*Optionen > Latenz je Interface messen*): je Interface eine
+  weitere Floating-Match-Regel am Ende des erzeugten Blocks, siehe
+  [Latenz je Interface](#latenz-je-interface).
 
 ## Grenzen
 

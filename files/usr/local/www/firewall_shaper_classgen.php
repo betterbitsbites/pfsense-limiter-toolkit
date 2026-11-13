@@ -110,6 +110,8 @@ if ($_POST) {
 		}
 		$s['srcports'] = !empty($_POST['srcports']);
 		$s['ecn'] = !empty($_POST['ecn']);
+		$s['latprobe'] = !empty($_POST['latprobe']);
+		$s['latclass'] = isset($classes[$_POST['latclass'] ?? '']) ? $_POST['latclass'] : '';
 		$s['aliasname'] = trim($_POST['aliasname'] ?? 'SCG_LOCALNETS');
 		$s['localnets'] = trim($_POST['localnets'] ?? '');
 
@@ -197,7 +199,13 @@ function class_select($name, $sel, $classes, $allowEmpty = true) {
 		<?=scg_t('Rules per interface:')?>
 		<?php foreach ($preview['perif'] as $if => $n): ?>
 			<b><?=h($ifaces[$if] ?? $if)?></b>: <?=$n?> &nbsp;
-		<?php endforeach; ?></p>
+		<?php endforeach; ?>
+		<?php if ($preview['probes']): ?>
+			<?=scg_t('Latency probes:')?> <?=count($preview['probes'])?>
+		<?php endif; ?></p>
+		<?php foreach ($preview['notes'] as $n): ?>
+			<p class="text-warning"><?=h($n)?></p>
+		<?php endforeach; ?>
 		<table class="table table-condensed table-striped">
 			<thead><tr><th>Limiter</th><th>Queue</th><th><?=scg_t('Weight')?></th><th>AQM</th><th><?=scg_t('Description')?></th></tr></thead>
 			<tbody>
@@ -210,12 +218,18 @@ function class_select($name, $sel, $classes, $allowEmpty = true) {
 		<table class="table table-condensed">
 			<thead><tr><th>Interface</th><th>Proto</th><th><?=scg_t('Source')?></th><th><?=scg_t('Destination')?></th><th>In (Upload)</th><th>Out (Download)</th><th><?=scg_t('Description')?></th></tr></thead>
 			<tbody>
-			<?php foreach ($preview['rules'] as $r):
-				$src = isset($r['source']['any']) ? 'any' : ($r['source']['address'] ?? '');
+			<?php $allifs = get_configured_interface_with_descr(); foreach ($preview['rules'] as $r):
+				$src = isset($r['source']['any']) ? 'any' : ($r['source']['address'] ?? ($r['source']['network'] ?? ''));
 				if (isset($r['source']['port'])) { $src .= ':' . $r['source']['port']; }
-				$dst = '!' . $r['destination']['address'] . (isset($r['destination']['port']) ? ':' . $r['destination']['port'] : '');
+				if (isset($r['destination']['any'])) {
+					$dst = 'any';
+				} else {
+					$dst = (isset($r['destination']['not']) ? '!' : '') . $r['destination']['address'] . (isset($r['destination']['port']) ? ':' . $r['destination']['port'] : '');
+				}
+				$rif = implode(', ', array_map(function ($x) use ($allifs) { return $allifs[$x] ?? $x; }, explode(',', $r['interface'])));
+				$proto = ($r['protocol'] ?? 'any') . ' ' . $r['ipprotocol'] . (($r['direction'] ?? 'in') == 'out' ? ' out' : '') . (!empty($r['dscp']) ? ' tos ' . $r['dscp'] : '');
 			?>
-				<tr><td><?=h($ifaces[$r['interface']] ?? $r['interface'])?></td><td><?=h(($r['protocol'] ?? 'any') . ' ' . $r['ipprotocol'])?></td><td><?=h($src)?></td><td><?=h($dst)?></td><td><?=h($r['dnpipe'])?></td><td><?=h($r['pdnpipe'])?></td><td><?=h($r['descr'])?></td></tr>
+				<tr><td><?=h($rif)?></td><td><?=h($proto)?></td><td><?=h($src)?></td><td><?=h($dst)?></td><td><?=h($r['dnpipe'])?></td><td><?=h($r['pdnpipe'])?></td><td><?=h($r['descr'])?></td></tr>
 			<?php endforeach; ?>
 			</tbody>
 		</table>
@@ -440,6 +454,18 @@ function class_select($name, $sel, $classes, $allowEmpty = true) {
 			<input class="form-control" type="text" name="aliasname" value="<?=h($s['aliasname'])?>">
 		</div>
 		<label><input type="checkbox" name="srcports" value="1" <?=!empty($s['srcports']) ? 'checked' : ''?>> <?=scg_t('Also match source port (like the wizard\'s "both", doubles the number of rules)')?></label>
+		<br>
+		<label><input type="checkbox" name="latprobe" value="1" <?=!empty($s['latprobe']) ? 'checked' : ''?>> <?=scg_t('Measure latency per interface (Limiter Live)')?></label>
+		<div class="form-inline" style="margin:4px 0 0 20px">
+			<label for="scg_latclass" style="font-weight:normal"><?=scg_t('through the queue')?></label>
+			<select class="form-control input-sm" name="latclass" id="scg_latclass">
+				<?php $lcls = scg_latprobe_class($s); foreach ($classes as $c => $d): ?>
+				<option value="<?=h($c)?>" <?=$c == $lcls ? 'selected' : ''?>><?=h($c)?> (<?=h($s['classes'][$c]['weight'] ?? $d['weight'])?>)</option>
+				<?php endforeach; ?>
+			</select>
+		</div>
+		<span class="help-block"><?=scg_t('Shows whether interfaces with a higher weight really get a lower latency under load. Adds one floating match rule per interface on the interfaces with a gateway (ICMP from pfSense itself, marked with its own DSCP value). The Autorate service then sends about 5 pings per second per interface to the Autorate ping targets. Needs Autorate or its latency measurement to be enabled.')?>
+			<?=scg_t('The queue decides what the measurement shows: an interactive or real-time class shows the latency that prioritized traffic gets on each interface (default: the interactive class), qDefault shows what ordinary traffic gets.')?></span>
 	</div>
 </div>
 

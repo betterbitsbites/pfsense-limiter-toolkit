@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.5.9) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.0) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -78,6 +78,9 @@ and application assignments are converted automatically and shown for review.
   shows the pipes, e.g. `SCG Pipe U/D_ILAN_qGames Steam`.
 - Alias `SCG_LOCALNETS` (RFC 1918, ULA, link-local, multicast): this traffic
   is never shaped, so inter-VLAN traffic stays free.
+- Optional (*Options > Measure latency per interface*): one more floating
+  match rule per interface at the end of the generated block, see
+  [Latency per interface](#latency-per-interface).
 
 ## Recognising games
 
@@ -143,6 +146,34 @@ Autorate state. The service keeps the last 5 minutes of latency, limit and throu
 
 For stable values `net.inet.ip.dummynet.expire=0` is needed; the page offers a
 button that sets it immediately and as a system tunable.
+
+### Latency per interface
+
+Shows whether interfaces with a higher weight really get a lower latency
+under load. The normal latency measurement runs from pfSense itself and never
+passes a limiter, so it only shows the line. With *Class Generator > Options >
+Measure latency per interface* enabled and applied:
+
+- Every shaped interface gets its own DSCP value (DSCP pool 2, `xxxx11`,
+  reserved for local use; at most 16 interfaces) and one floating match rule:
+  interfaces with a gateway, direction *out*, ICMP echo request from *This
+  firewall (self)* with that DSCP value → `U_<tag>_<class>` /
+  `D_<tag>_<class>`.
+- The queue is selectable next to the option. Default is the interactive
+  class (qInteractive, or qOthersHigh with 7 classes): the comparison is meant
+  to show how well the shaper protects prioritized traffic. Choose the
+  real-time class for the best case or qDefault for what ordinary traffic
+  gets. On a scheme switch the choice is converted with the other classes.
+- The Autorate service (also in measure-only mode) pings the Autorate ping
+  targets about 5 times per second per interface with that DSCP value and its
+  own ICMP ID, so pf creates a separate state that runs through the
+  selected queue of the interface. The ID changes every 5 minutes and after
+  configuration changes, so a state created before the rule existed does not
+  stay. Load: a few kbit/s per interface. Paused during speed tests.
+- Limiter Live shows one row per interface, sorted by weight, plus a WAN
+  reference row (same targets, no queue): average and P95 of the last 10 s,
+  *queue delay* = interface latency minus WAN reference (red above 25 ms),
+  and a 2-minute sparkline.
 
 ## Speedtest
 
