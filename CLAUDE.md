@@ -121,5 +121,12 @@ On a real pfSense: `sh install.sh` as root (tcsh: run `sh` first for
   bump, CHANGELOG entry, push to `main`. For a release, build
   `pfSense-pkg-ShaperClassGen-<version>.tar.gz` (files, install.sh,
   uninstall.sh, READMEs, LICENSE in a folder of the same name).
-- If a private notes directory is available in the session (e.g. added with
-  `--add-dir`), keep it up to date as described in its own `CLAUDE.md`.
+- Before changing files: restate the request in one or two sentences, name
+  the issue it belongs to, and ask if anything is unclear. Never guess issue
+  numbers – issues and pull requests share numbers; check `gh issue list` and
+  `gh pr list` first.
+- A maintainer may keep private notes about their own setup in a sibling
+  directory, imported through a git-ignored `CLAUDE.local.md`. If such notes
+  are loaded, they describe the setup the package is primarily tested on:
+  take them into account, keep them up to date as described in their own
+  `CLAUDE.md`, and never copy anything from them into this repository.
