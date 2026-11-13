@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.3
+- CoDel on the child queues was lost whenever queues were changed while the
+  limiter carried traffic: the kernel refuses AQM then
+  (`config_aqm: flowset busy`) and the queue ran as tail drop with its full
+  queue length, i.e. with much higher latency under load (issue #9).
+  - The Class Generator re-creates the affected limiters after
+    *Generate / Update* (delete and reload within milliseconds; running
+    Autorate bandwidths are kept, queue numbers and firewall states stay).
+  - Limiter Live detects queues without AQM (`dnctl queue show`), marks them
+    with *no AQM* and offers *Re-create limiters*.
+  - README: the console message is not harmless after all; explained.
+
 ## 0.6.2
 - Latency per interface: each interface is compared with the WAN reference
   over the same time span. After a speed test the reference still contained

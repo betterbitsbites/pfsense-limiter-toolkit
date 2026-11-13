@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.2)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.3)
 
 [English](README.md) · Deutsch
 
@@ -245,6 +245,19 @@ nicht. Das Paket bietet deshalb vier Wege, die sich kombinieren lassen:
   überschreiben sie die Klassen.
 - Eigene öffentliche IPv6-Präfixe in den lokalen Netzen ergänzen, sonst wird
   Inter-VLAN-IPv6 mitgeshapt.
+- **CoDel und Änderungen im laufenden Betrieb:** Der Kernel setzt kein AQM
+  mehr auf eine Queue, sobald ihr Limiter Verkehr getragen hat, und meldet
+  `config_aqm Unable to configure flowset, flowset busy!`. Eine im laufenden
+  Betrieb geänderte Queue verliert dadurch CoDel und arbeitet als Tail Drop
+  mit voller Queue-Länge (unter Last deutlich höhere Latenz). Der
+  Klassengenerator legt die betroffenen Limiter nach *Generate / Update* neu
+  an; Limiter Live zeigt eine Warnung mit der Schaltfläche *Limiter neu
+  anlegen*, wenn Queues ohne AQM laufen (auch nach Änderungen unter *Firewall >
+  Traffic Shaper > Limiters*). `dnctl queue show` zeigt den Zustand am Ende
+  jeder Queue-Zeile: `AQM CoDel …` = aktiv, `droptail` = kein AQM, nichts =
+  konfiguriert, aber nicht aktiv. Beim Neuladen unveränderter Queues (Regel-
+  oder Alias-Änderungen) erscheint die Meldung auch, CoDel bleibt dabei aber
+  erhalten.
 - Das Paket kommt nicht aus dem Netgate-Repository. Nach einem pfSense-Update
   ggf. `sh install.sh` erneut ausführen.
 

@@ -99,6 +99,17 @@ if ($_POST && ($_POST['act'] ?? '') == 'fixexpire') {
 	scg_dn_fix_expire();
 	$fixmsg = scg_t('net.inet.ip.dummynet.expire=0 set (active immediately and saved as system tunable).');
 }
+$aqmmsg = '';
+if ($_POST && ($_POST['act'] ?? '') == 'recreate') {
+	$rc = scg_dn_recreate();
+	if ($rc === null) {
+		$aqmmsg = array(scg_t('The limiter rules (/tmp/rules.limiter) were not found. Reload the firewall (Status > Filter Reload) and try again.'), 'danger');
+	} elseif ($rc[1] == 0) {
+		$aqmmsg = array(scg_t('Limiters re-created: AQM is active again on %d queues.', $rc[0]), 'success');
+	} else {
+		$aqmmsg = array(scg_t('AQM is still not active on %d queues. A limiter is probably used directly by a rule (not only through its queues); then only a reboot helps.', $rc[1]), 'warning');
+	}
+}
 $expire = scg_dn_expire();
 
 $pgtitle = array(gettext("Status"), "Limiter Live");
@@ -113,6 +124,18 @@ scg_tabs('live');
 if ($fixmsg) {
 	print_info_box(htmlspecialchars($fixmsg), 'success');
 }
+if ($aqmmsg) {
+	print_info_box(htmlspecialchars($aqmmsg[0]), $aqmmsg[1]);
+}
+?>
+<div class="alert alert-warning" id="scg_aqmwarn" style="display:none">
+	<form method="post" action="status_limiters_live.php" style="margin:0">
+		<?=scg_t('<b>AQM (CoDel) is not active on <span id="scg_aqmcount">0</span> queues.</b> The kernel rejects AQM while a limiter carries traffic ("config_aqm: flowset busy"), so queues changed during operation run as tail drop with a full-length queue and much higher latency. Re-creating the affected limiters attaches the queues to a fresh scheduler; traffic through them is interrupted for a moment.')?>
+		<input type="hidden" name="act" value="recreate">
+		<button type="submit" class="btn btn-sm btn-warning" style="margin-left:8px"><i class="fa-solid fa-rotate"></i> <?=scg_t('Re-create limiters')?></button>
+	</form>
+</div>
+<?php
 if ($expire !== null && $expire !== 0) {
 ?>
 <div class="alert alert-warning">
@@ -369,6 +392,11 @@ events.push(function() {
 	function renderPipes(data) {
 		var hide = $('#scg_hideidle').prop('checked');
 		var h = '';
+		/* Queues mit gesetztem AQM-Flag, aber ohne AQM im Kernel (laufen als Tail Drop) */
+		var noAqm = 0;
+		data.pipes.forEach(function(p) { p.queues.forEach(function(q) { if (q.aqm === 'missing') noAqm++; }); });
+		$('#scg_aqmcount').text(noAqm);
+		$('#scg_aqmwarn').toggle(noAqm > 0);
 		data.pipes.forEach(function(p) {
 			h += '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' +
 				esc(p.name) + arBadge(data, p.name) + ' <small>' + (p.bw ? fmtRate(p.bw) : t('unlimited')) + (p.type ? ' &middot; ' + esc(p.type) : '') +
@@ -384,7 +412,8 @@ events.push(function() {
 				byWeight(p.queues).forEach(function(q) {
 					var idle = queueIdle(q);
 					if (hide && idle) return;
-					h += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(q.name) + '</td><td><small>' + esc(q.descr) + '</small></td>' +
+					var na = q.aqm === 'missing' ? ' <span class="label label-warning" title="' + esc(t('AQM is configured but not active in the kernel; the queue runs as tail drop.')) + '">' + t('no AQM') + '</span>' : '';
+					h += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(q.name) + na + '</td><td><small>' + esc(q.descr) + '</small></td>' +
 						'<td class="scg-num">' + q.weight + '</td><td class="scg-num">' + q.flows + '</td>' +
 						'<td class="scg-num">' + fmtRate(q.rate) + '</td><td>' + bar(q.rate, p.bw) + '</td>' +
 						'<td class="scg-num">' + fmtNum(q.pps) + '</td>' +

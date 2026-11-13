@@ -23,7 +23,8 @@ require_once("shaper.inc");
 require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
-define('SCG_VERSION', '0.6.2');
+define('SCG_DN_RULES', '/tmp/rules.limiter');
+define('SCG_VERSION', '0.6.3');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
@@ -1480,13 +1481,25 @@ function scg_apply($s, &$errors, &$msgs) {
 	write_config("ShaperClassGen: " . count($plan['queues']) . " Queues und " . count($new) . " Regeln erzeugt");
 
 	scg_dnctl_delete($removed);
-	filter_configure();
+	/* Synchron laden, damit die Queues danach geprueft werden koennen */
+	if (function_exists('filter_configure_sync')) {
+		filter_configure_sync();
+	} else {
+		filter_configure();
+	}
 	if (function_exists('clear_subsystem_dirty')) {
 		clear_subsystem_dirty('shaper');
 		clear_subsystem_dirty('filter');
 		clear_subsystem_dirty('aliases');
 	}
 	$msgs[] = scg_t('%d queues and %d floating match rules created. Firewall is being reloaded.', count($plan['queues']), count($new));
+	/* Geaenderte Queues verlieren im laufenden Betrieb ihr AQM (CoDel): Limiter neu anlegen */
+	$rc = scg_dn_recreate();
+	if ($rc !== null && $rc[0] > 0) {
+		$msgs[] = $rc[1] == 0
+			? scg_t('CoDel re-activated on %d queues (limiters re-created).', $rc[0])
+			: scg_t('CoDel is still not active on %d queues. See Status > Limiter Live.', $rc[1]);
+	}
 	if ($removed) {
 		/* Bestehende Verbindungen behalten ihre alte Queue-Nummer */
 		$msgs[] = scg_t('%d queues were renamed or removed. Reset the firewall states (Diagnostics > States > Reset States) so that existing connections use the new queues.', count($removed));
@@ -1565,6 +1578,23 @@ function scg_dn_bucket($line) {
 	return null;
 }
 
+/*
+ * AQM-Zustand einer Queue aus dem Ende ihrer Zeile in "dnctl queue show"
+ * (sbin/ipfw/dummynet.c, print_flowset_parms): " AQM CoDel ..." = aktiv,
+ * "droptail" = kein AQM, leer = AQM-Flag gesetzt, aber im Kernel nicht
+ * angehaengt ("flowset busy" beim Konfigurieren) -> laeuft als Tail Drop.
+ * Bei RED folgt "RED w_q ..." in der naechsten Zeile.
+ */
+function scg_dn_aqm_state($line) {
+	if (preg_match('/\bAQM\s+(?:type\s+)?([A-Za-z_]+)/', $line, $m)) {
+		return strtolower($m[1]);
+	}
+	if (preg_match('/\bdroptail\s*$/', $line)) {
+		return 'droptail';
+	}
+	return 'missing';
+}
+
 /* "dnctl queue show" -> Child-Queues mit summierten Zaehlern */
 function scg_dn_parse_queues($lines) {
 	$q = array();
@@ -1573,7 +1603,11 @@ function scg_dn_parse_queues($lines) {
 		if (preg_match('/^q(\d+)\s+\d+\s+sl\.\s+(\d+)\s+flows.*?\bsched\s+(\d+)\s+weight\s+(\d+)/', $l, $m)) {
 			$cur = intval($m[1]);
 			$q[$cur] = array('flows' => intval($m[2]), 'sched' => intval($m[3]), 'weight' => intval($m[4]),
-				'pkts' => 0, 'bytes' => 0, 'drops' => 0);
+				'aqm' => scg_dn_aqm_state($l), 'pkts' => 0, 'bytes' => 0, 'drops' => 0);
+			continue;
+		}
+		if ($cur !== null && $q[$cur]['aqm'] === 'missing' && preg_match('/^\s+G?\s?RED\s+w_q/', $l)) {
+			$q[$cur]['aqm'] = 'red';
 			continue;
 		}
 		if ($cur !== null && ($b = scg_dn_bucket($l)) !== null) {
@@ -1665,6 +1699,80 @@ function scg_dn_names() {
 	return array($pname, $qname, $porder);
 }
 
+/*
+ * Limiter neu anlegen, deren Queues AQM (CoDel) verloren haben.
+ *
+ * Der Kernel lehnt AQM ab, sobald der Scheduler eines Limiters eine Instanz
+ * hat, also sobald Verkehr durchlief ("config_aqm: flowset busy"). Bei jeder
+ * Aenderung einer Queue im laufenden Betrieb faellt sie dadurch auf Tail Drop
+ * zurueck. Abhilfe: betroffene Limiter samt Queues loeschen und die von
+ * pfSense erzeugten Regeln (/tmp/rules.limiter) sofort neu laden; die Queues
+ * haengen dann an einem frischen Scheduler. Laufende Bandbreiten (Autorate,
+ * Speedtest-Drosselung) werden danach wiederhergestellt. Die Nummern bleiben
+ * gleich, Firewall-States behalten ihre Queue.
+ * Liefert array(betroffen vorher, betroffen nachher) oder null ohne Regeldatei.
+ */
+function scg_dn_recreate($rulesfile = SCG_DN_RULES) {
+	$rules = @file_get_contents($rulesfile);
+	if ($rules === false || trim($rules) === '') {
+		return null;
+	}
+	$o = array();
+	exec('/sbin/dnctl queue show 2>/dev/null', $o);
+	$queues = scg_dn_parse_queues($o);
+	$pipes = array();
+	$before = 0;
+	foreach ($queues as $q) {
+		if ($q['aqm'] === 'missing') {
+			$pipes[$q['sched']] = true;
+			$before++;
+		}
+	}
+	if (!$pipes) {
+		return array(0, 0);
+	}
+	$o = array();
+	exec('/sbin/dnctl pipe show 2>/dev/null', $o);
+	$bw = array();
+	foreach (scg_dn_parse_pipes($o) as $num => $p) {
+		$bw[$num] = $p['bw'];
+	}
+	foreach ($queues as $qn => $q) {
+		if (isset($pipes[$q['sched']])) {
+			mwexec('/sbin/dnctl queue delete ' . intval($qn), true);
+		}
+	}
+	foreach (array_keys($pipes) as $pn) {
+		mwexec('/sbin/dnctl pipe delete ' . intval($pn), true);
+	}
+	mwexec('/sbin/dnctl ' . escapeshellarg($rulesfile), true);
+	/* Laufende Bandbreite wiederherstellen, falls sie von der Konfiguration abweicht */
+	foreach (array_keys($pipes) as $pn) {
+		if (empty($bw[$pn]) || !preg_match('/^pipe ' . intval($pn) . ' config.*$/m', $rules, $m)) {
+			continue;
+		}
+		$kbit = max(1, (int)round($bw[$pn] / 1000));
+		$line = trim($m[0]);
+		$line = preg_match('/\sbw\s+\S+/', $line) ? preg_replace('/\sbw\s+\S+/', " bw {$kbit}Kb", $line, 1) : $line . " bw {$kbit}Kb";
+		if ($line !== trim($m[0])) {
+			$args = array();
+			foreach (preg_split('/\s+/', $line) as $t) {
+				$args[] = escapeshellarg($t);
+			}
+			mwexec('/sbin/dnctl ' . implode(' ', $args), true);
+		}
+	}
+	$o = array();
+	exec('/sbin/dnctl queue show 2>/dev/null', $o);
+	$after = 0;
+	foreach (scg_dn_parse_queues($o) as $q) {
+		if ($q['aqm'] === 'missing') {
+			$after++;
+		}
+	}
+	return array($before, $after);
+}
+
 /* dummynet-Zaehler bleiben nur stabil, wenn leere Queues nicht geloescht werden */
 function scg_dn_expire() {
 	$v = trim((string)shell_exec('/sbin/sysctl -n net.inet.ip.dummynet.expire 2>/dev/null'));
@@ -1739,7 +1847,7 @@ function scg_dn_snapshot($raw = null) {
 		$meta = $qname[$qn] ?? array('name' => "Queue {$qn}", 'descr' => '', 'pipe' => $q['sched'], 'order' => 100000 + $qn);
 		$pn = $q['sched'];
 		$qs[$pn][] = array('num' => $qn, 'name' => $meta['name'], 'descr' => $meta['descr'], 'weight' => $q['weight'],
-			'flows' => $q['flows'], 'pkts' => $q['pkts'], 'bytes' => $q['bytes'], 'drops' => $q['drops'], 'order' => $meta['order']);
+			'flows' => $q['flows'], 'aqm' => $q['aqm'], 'pkts' => $q['pkts'], 'bytes' => $q['bytes'], 'drops' => $q['drops'], 'order' => $meta['order']);
 	}
 	foreach ($qs as $pn => $list) {
 		usort($list, function ($a, $b) { return $a['order'] <=> $b['order']; });

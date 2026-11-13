@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.2) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.3) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -211,10 +211,18 @@ Status > Speedtest measures the raw line from pfSense itself, by default every
   otherwise they override the classes.
 - Add your own public IPv6 prefixes to the local networks, otherwise inter-VLAN
   IPv6 is shaped too.
-- Changing rules or aliases while traffic flows reloads the limiter queues;
-  queues with CoDel that are busy at that moment log
-  `config_aqm Unable to configure flowset, flowset busy!` on the console. This
-  is harmless pfSense/dummynet behaviour.
+- **CoDel and changes during operation:** the kernel refuses to set AQM on a
+  queue once its limiter has carried traffic, and logs
+  `config_aqm Unable to configure flowset, flowset busy!`. A queue that is
+  changed while the box is running therefore loses CoDel and runs as tail drop
+  with its full queue length (much higher latency under load). The Class
+  Generator re-creates the affected limiters after *Generate / Update*;
+  Limiter Live shows a warning with a *Re-create limiters* button when queues
+  are without AQM (also after changes in *Firewall > Traffic Shaper >
+  Limiters*). `dnctl queue show` shows the state at the end of each queue line:
+  `AQM CoDel …` = active, `droptail` = no AQM, nothing = configured but not
+  active. Reloading unchanged queues (rule or alias changes) also logs the
+  message but keeps CoDel.
 
 ## License
 

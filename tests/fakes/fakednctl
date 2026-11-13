@@ -12,7 +12,9 @@ queue)
       33) B=$((T*5000000/8)); F=1;;   # U_LAN qDefault ~5 Mbit/s
       *) B=0; F=0;;
     esac
-    printf "q%05d  50 sl. %d flows (1 buckets) sched %d weight %d lmax 0 pri 0  AQM CoDel target 5ms interval 100ms NoECN\n" $i $F $([ $i -le 28 ] && echo 3 || echo 4) $(( (i*37)%100+1 ))
+    # run/dn_noaqm: queues of limiter 3 show the AQM flag without attached AQM (empty tail)
+    AQM=" AQM CoDel target 5ms interval 100ms NoECN"; [ -f "$D/run/dn_noaqm" ] && [ $i -le 28 ] && AQM=""
+    printf "q%05d  50 sl. %d flows (1 buckets) sched %d weight %d lmax 0 pri 0 %s\n" $i $F $([ $i -le 28 ] && echo 3 || echo 4) $(( (i*37)%100+1 )) "$AQM"
     if [ $F = 1 ]; then echo "BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp"; echo "  0 ip           0.0.0.0/0             0.0.0.0/0     $((B/1400)) $B  0    0   $((T%7))"; fi
     i=$((i+1)); done;;
 sched) P=$((T*40000)); B=$((T*60000000)); sed "s/15436946 21391523355/$P $B/" "$D/dn/sched.txt";;

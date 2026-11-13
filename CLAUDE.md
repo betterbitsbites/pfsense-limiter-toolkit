@@ -24,7 +24,12 @@ History of changes: `CHANGELOG.md`.
   rule descriptions with `SCG Pipe U/D_<tag>_<class> …` (max 52 chars),
   aliases with `[SCG]` in the description. Only marked objects are ever
   replaced or removed.
-- Limiters themselves: **Tail Drop**. CoDel on child queues is fine.
+- Limiters themselves: **Tail Drop**. CoDel on child queues is fine, but the
+  kernel only attaches AQM while the limiter's scheduler has no instance
+  (no traffic yet); a queue changed later keeps the AQM flag without AQM
+  (`dnctl queue show` line ends empty). `scg_dn_recreate()` deletes the
+  affected limiters and reloads `/tmp/rules.limiter`; called after apply and
+  from Limiter Live.
   Autorate only changes limiters (pipes), never queues.
 - Limiter Live: queues sorted by weight; interfaces grouped
   WAN → VPN → shaped → not shaped, by name; matrix by priority; "not shaped"
