@@ -153,6 +153,12 @@ if ($expire !== null && $expire !== 0) {
 	.scg-bar > span { position: absolute; left: 0; top: 0; bottom: 0; background: #2f9e75; transition: width .4s; }
 	.scg-bar.scg-high > span { background: #d89b2b; }
 	.scg-bar.scg-full > span { background: #ff5c5c; }
+	/* Queue bars with fair-share tick (test): colour by state, tick = fair share */
+	.scg-bar.scg-q-free > span { background: #2f9e75; }
+	.scg-bar.scg-q-share > span { background: #d89b2b; }
+	.scg-bar.scg-q-throttled > span { background: #ff5c5c; }
+	.scg-bar.scg-q-idle > span { background: #9aa4b2; }
+	.scg-bar > i.scg-tick { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #e6e6e6; box-shadow: 0 0 0 1px rgba(0,0,0,.65); }
 	.scg-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 	.scg-idle { opacity: .45; }
 	.scg-matrix td, .scg-matrix th { text-align: right; white-space: nowrap; }
@@ -351,6 +357,20 @@ events.push(function() {
 		return '<div class="scg-bar' + cls + '" title="' + pct.toFixed(1) + ' %"><span style="width:' + pct.toFixed(1) + '%"></span></div>';
 	}
 	/*
+	 * Queue bar with fair-share tick (test). Fair share = limiter bandwidth x
+	 * weight / sum of the weights of the active queues (WF2Q+ guarantee). A
+	 * queue may run past its tick when others leave bandwidth unused.
+	 */
+	function qbar(q, bw, fair) {
+		if (!bw || q.rate === null || fair === null) return bar(q.rate, bw);
+		var pct = Math.min(100, q.rate / bw * 100), fp = Math.min(100, fair / bw * 100);
+		var st = q.dps > 0 ? 'throttled' : ((q.rate || 0) < IDLE_BPS ? 'idle' : (q.rate >= 0.9 * fair ? 'share' : 'free'));
+		var names = { throttled: t('Throttled'), share: t('At or above share'), free: t('Free'), idle: t('idle') };
+		var tip = t('%s: rate %s, fair share %s, %s drops/s', names[st], fmtRate(q.rate), fmtRate(fair), fmtNum(q.dps, 1));
+		return '<div class="scg-bar scg-q-' + st + '" title="' + esc(tip) + '"><span style="width:' + pct.toFixed(1) + '%"></span>' +
+			'<i class="scg-tick" style="left:' + fp.toFixed(1) + '%"></i></div>';
+	}
+	/*
 	 * Difference with counter reset detection: if the counter drops, the
 	 * queue was recreated; at most dt seconds have passed since, so cur/dt
 	 * is a lower bound instead of a gap.
@@ -420,6 +440,9 @@ events.push(function() {
 		$('#scg_aqmcount').text(noAqm);
 		$('#scg_aqmwarn').toggle(noAqm > 0);
 		data.pipes.forEach(function(p) {
+			/* Sum of the weights of the active queues for the fair-share tick */
+			var sumW = 0;
+			p.queues.forEach(function(q) { if ((q.rate || 0) >= IDLE_BPS) sumW += q.weight || 0; });
 			h += '<div class="panel panel-default" data-scg-sec="pipe_' + esc(p.name) + '"><div class="panel-heading"><h2 class="panel-title">' +
 				esc(p.name) + arBadge(data, p.name) + ' <small>' + (p.bw ? fmtRate(p.bw) : t('unlimited')) + (p.type ? ' &middot; ' + esc(p.type) : '') +
 				(p.loaded ? '' : ' &middot; <span class="scg-hot">' + t('not loaded') + '</span>') + '</small>' +
@@ -429,7 +452,8 @@ events.push(function() {
 			if (p.queues.length) {
 				h += '<div class="table-responsive panel-body"><table class="table table-condensed table-hover" style="margin-bottom:0"><thead><tr>' +
 					'<th>Queue</th><th>' + t('Description') + '</th><th class="scg-num">' + t('Weight') + '</th><th class="scg-num">Flows</th>' +
-					'<th class="scg-num">Rate</th><th style="width:30%">' + t('Share of limiter') + '</th><th class="scg-num">' + t('Packets/s') + '</th>' +
+					'<th class="scg-num">Rate</th><th style="width:30%" title="' + esc(t('Tick = fair share: limiter bandwidth × weight ÷ sum of the weights of the active queues. A queue may run past its tick when others leave bandwidth unused. Red = drops now, orange = at or above its share, green = below, grey = idle.')) + '">' +
+					t('Share of limiter') + ' <span class="label label-info">' + t('test') + '</span></th><th class="scg-num">' + t('Packets/s') + '</th>' +
 					'<th class="scg-num">Drops/s</th><th class="scg-num">Drops</th></tr></thead><tbody>';
 				byWeight(p.queues).forEach(function(q) {
 					var idle = queueIdle(q);
@@ -437,7 +461,7 @@ events.push(function() {
 					var na = q.aqm === 'missing' ? ' <span class="label label-warning" title="' + esc(t('AQM is configured but not active in the kernel; the queue runs as tail drop.')) + '">' + t('no AQM') + '</span>' : '';
 					h += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(q.name) + na + '</td><td><small>' + esc(q.descr) + '</small></td>' +
 						'<td class="scg-num">' + q.weight + '</td><td class="scg-num">' + q.flows + '</td>' +
-						'<td class="scg-num">' + fmtRate(q.rate) + '</td><td>' + bar(q.rate, p.bw) + '</td>' +
+						'<td class="scg-num">' + fmtRate(q.rate) + '</td><td>' + qbar(q, p.bw, p.bw && sumW ? p.bw * Math.max(q.weight || 0, 0) / (sumW + ((q.rate || 0) >= IDLE_BPS ? 0 : (q.weight || 0))) : null) + '</td>' +
 						'<td class="scg-num">' + fmtNum(q.pps) + '</td>' +
 						'<td class="scg-num' + (q.dps ? ' scg-hot' : '') + '">' + fmtNum(q.dps, 1) + '</td>' +
 						'<td class="scg-num">' + fmtNum(q.drops) + '</td></tr>';

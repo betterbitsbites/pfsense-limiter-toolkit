@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.7
+- Limiter Live (test): each queue bar has a tick at the queue's fair share,
+  i.e. limiter bandwidth × weight ÷ sum of the weights of the active queues
+  (above 5 Kbit/s). Bar colour: red = drops now, orange = at or above the
+  share, green = below, grey = idle; the tooltip shows rate, fair share and
+  drops/s. A queue past its tick is normal when other queues leave
+  bandwidth unused. Helps to tell a queue held back by the shaper from one
+  that does not ask for more (issue #12).
+
 ## 0.6.6
 - Limiter Live: every panel (latency graphs, latency per interface, Autorate,
   Interfaces, Classes per interface and each limiter) has a *Show* checkbox
