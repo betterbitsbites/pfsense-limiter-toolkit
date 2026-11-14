@@ -191,7 +191,9 @@ if ($expire !== null && $expire !== 0) {
 	.scg-lat text { fill: currentColor; font-size: 10px; opacity: .7; }
 	.scg-kpi { display: inline-block; margin-right: 18px; }
 	.scg-kpi b { font-size: 120%; }
-	.scg-toggle { font-weight: normal; margin: 0; font-size: 85%; }
+	.scg-toggle { font-weight: normal; margin: 0 0 0 10px; font-size: 85%; }
+	.panel.scg-collapsed > :not(.panel-heading) { display: none; }
+	.panel.scg-collapsed > .panel-heading { border-bottom: 0; }
 	.scg-ilat td { vertical-align: middle !important; }
 	.scg-ilat tr.scg-ref td { border-bottom: 2px solid rgba(128,128,128,.35); }
 	.scg-lbar { position: relative; height: 14px; min-width: 140px; background: rgba(128,128,128,.14); border-radius: 3px; overflow: hidden; }
@@ -273,8 +275,28 @@ events.push(function() {
 	$('#scg_hideidle').prop('checked', load('hideidle') !== '0');
 	$('#scg_idleifs').prop('checked', load('idleifs') === '1');
 	$('#scg_showvpn').prop('checked', load('showvpn') !== '0');
-	var showMatrix = load('matrix') !== '0';
-	var showIfaces = load('ifaces') !== '0';
+	/*
+	 * Show/hide per panel: every panel with data-scg-sec gets a "Show"
+	 * checkbox in its heading; hidden panels keep only the heading. The state
+	 * is remembered per browser (old keys "ifaces"/"matrix" stay valid).
+	 */
+	function secKey(k) { return k === 'ifaces' || k === 'matrix' ? k : 'sec_' + k; }
+	function applyToggles() {
+		$('.panel[data-scg-sec]').each(function() {
+			var p = $(this), on = load(secKey(p.attr('data-scg-sec'))) !== '0';
+			var h = p.children('.panel-heading').children('.panel-title');
+			if (!h.length) return;
+			if (!h.children('.scg-toggle').length)
+				h.prepend('<label class="pull-right scg-toggle"><input type="checkbox" class="scg-sec-show"> ' + t('Show') + '</label>');
+			h.children('.scg-toggle').find('input').prop('checked', on);
+			p.toggleClass('scg-collapsed', !on);
+		});
+	}
+	$(document).on('change', '.scg-sec-show', function() {
+		var p = $(this).closest('.panel[data-scg-sec]');
+		store(secKey(p.attr('data-scg-sec')), this.checked ? '1' : '0');
+		p.toggleClass('scg-collapsed', !this.checked);
+	});
 	$('#scg_interval, #scg_unit, #scg_idlemode').on('change', function() { store(this.id.replace('scg_', ''), $(this).val()); });
 	$('#scg_hideidle, #scg_idleifs, #scg_showvpn').on('change', function() { store(this.id.replace('scg_', ''), this.checked ? '1' : '0'); });
 
@@ -398,7 +420,7 @@ events.push(function() {
 		$('#scg_aqmcount').text(noAqm);
 		$('#scg_aqmwarn').toggle(noAqm > 0);
 		data.pipes.forEach(function(p) {
-			h += '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' +
+			h += '<div class="panel panel-default" data-scg-sec="pipe_' + esc(p.name) + '"><div class="panel-heading"><h2 class="panel-title">' +
 				esc(p.name) + arBadge(data, p.name) + ' <small>' + (p.bw ? fmtRate(p.bw) : t('unlimited')) + (p.type ? ' &middot; ' + esc(p.type) : '') +
 				(p.loaded ? '' : ' &middot; <span class="scg-hot">' + t('not loaded') + '</span>') + '</small>' +
 				'<span class="pull-right">' + fmtRate(p.rate) + ' &nbsp; ' + (p.dps ? '<span class="scg-hot">' + fmtNum(p.dps, 1) + ' Drops/s</span> &nbsp; ' : '') +
@@ -446,10 +468,8 @@ events.push(function() {
 			});
 		});
 		if (n == 0) { $('#scg_matrix').html(''); return; }
-		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + t('Classes per interface') + ' ' +
-			'<small>&darr; Download &middot; &uarr; Upload</small>' +
-			'<label class="pull-right scg-toggle"><input type="checkbox" id="scg_matrix_show"' + (showMatrix ? ' checked' : '') + '> ' + t('Show') + '</label></h2></div>';
-		if (!showMatrix) { $('#scg_matrix').html(head + '</div>'); return; }
+		var head = '<div class="panel panel-default" data-scg-sec="matrix"><div class="panel-heading"><h2 class="panel-title">' + t('Classes per interface') + ' ' +
+			'<small>&darr; Download &middot; &uarr; Upload</small></h2></div>';
 		var cl = Object.keys(cols).sort(function(a, b) {
 			var ia = CLASS_ORDER.indexOf(a), ib = CLASS_ORDER.indexOf(b);
 			if (ia < 0) ia = 99;
@@ -567,7 +587,7 @@ events.push(function() {
 		var title = t('Latency') + ' ' + (a.paused ? '<span class="label label-info">' + t('Speed test running &ndash; Autorate paused') + '</span>' :
 			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
 			' <small>Pinger ' + esc(a.mode) + ' &middot; ' + t('Threshold') + ' +' + a.threshold + ' ms' + (a.control ? '' : ' &middot; ' + t('measuring only, Autorate control is off')) + '</small>';
-		$('#scg_latency').html('<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + title + '</h2></div><div class="panel-body">' +
+		$('#scg_latency').html('<div class="panel panel-default" data-scg-sec="latency"><div class="panel-heading"><h2 class="panel-title">' + title + '</h2></div><div class="panel-body">' +
 			'<div>' + t('Last 10 s:') + ' ' + kpi(t('average'), s.avg, ' ms', hotAvg) + kpi('P95', s.p95, ' ms', baseAvg !== null && s.p95 > baseAvg + a.threshold) +
 			kpi('Min/Max', s.min === null ? null : s.min + ' / ' + s.max, ' ms') + kpi('Jitter', s.jitter, ' ms', s.jitter > a.threshold / 2) +
 			kpi(t('Loss'), s.loss, ' %', s.loss > 0) + '</div>' + svg +
@@ -659,7 +679,7 @@ events.push(function() {
 			'<span><i style="background:#e8892b"></i>' + t('Upload achieved') + '</span>' +
 			'<span><i style="background:repeating-linear-gradient(90deg,#e8892b 0 4px,transparent 4px 6px)"></i>' + t('Upload limit') + '</span>' +
 			'<span class="text-muted">' + t('Throughput in % of the Autorate maximum (right axis)') + '</span></div>';
-		$('#scg_combined').html('<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' +
+		$('#scg_combined').html('<div class="panel panel-default" data-scg-sec="combined"><div class="panel-heading"><h2 class="panel-title">' +
 			t('Latency and throughput') + ' <span class="label label-info">' + t('test') + '</span> <small>' + t('last 5 minutes') + '</small></h2></div>' +
 			'<div class="panel-body"><div class="scg-comb-wrap">' + svg + '<div class="scg-comb-tip" style="display:none"></div></div>' + leg + '</div></div>');
 
@@ -710,7 +730,7 @@ events.push(function() {
 		var d = longData, hours = longHours();
 		var sel = '<select class="form-control input-sm" id="scg_longh" style="display:inline-block;width:auto;margin-left:8px">' +
 			LONG_HOURS.map(function(h) { return '<option value="' + h + '"' + (h == hours ? ' selected' : '') + '>' + h + ' h</option>'; }).join('') + '</select>';
-		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + t('Latency and throughput') +
+		var head = '<div class="panel panel-default" data-scg-sec="long"><div class="panel-heading"><h2 class="panel-title">' + t('Latency and throughput') +
 			' <span class="label label-info">' + t('test') + '</span> <small>' + t('history') + '</small>' + sel + '</h2></div><div class="panel-body">';
 		if (!d || !d.rows || !d.rows.length) {
 			$('#scg_long').html(head + '<p class="text-muted">' + t('No history yet. The Autorate service records one value per minute; the first point appears after one minute.') + '</p></div></div>');
@@ -823,6 +843,7 @@ events.push(function() {
 	}
 	function bindLongSel() {
 		$('#scg_longh').on('change', function() { store('longh', this.value); longData = null; fetchLong(); });
+		applyToggles();
 	}
 
 	/*
@@ -884,7 +905,7 @@ events.push(function() {
 			return '<svg class="scg-ispark" viewBox="0 0 120 24" preserveAspectRatio="none">' + (d ? '<path d="' + d + '"/>' : '') + '</svg>';
 		}
 		function ms(v) { return v === null || v === undefined ? '–' : v.toFixed(1); }
-		var h = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">' + t('Latency per interface') +
+		var h = '<div class="panel panel-default" data-scg-sec="iflat"><div class="panel-heading"><h2 class="panel-title">' + t('Latency per interface') +
 			' <small>' + t('pings through the %s queue of each interface, last 10 s', esc(cls)) + '</small></h2></div>' +
 			'<div class="table-responsive panel-body"><table class="table table-condensed scg-ilat" style="margin-bottom:0"><thead><tr>' +
 			'<th>Interface</th><th class="scg-num">' + t('Weight') + '</th><th style="width:30%">' + t('Latency') + '</th>' +
@@ -932,7 +953,7 @@ events.push(function() {
 		arHist.delay.push(Math.max(0, maxDelay));
 		if (arHist.delay.length > 300) arHist.delay.shift();
 
-		var h = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Autorate ' +
+		var h = '<div class="panel panel-default" data-scg-sec="autorate"><div class="panel-heading"><h2 class="panel-title">Autorate ' +
 			' <small>' + (a.source ? t('measured at') + ' ' + esc(sourceText(a.source)) : '') +
 			(a.resets ? ' &middot; ' + t('%s&times; reapplied after filter reload', a.resets) : '') +
 			(a.discarded ? ' &middot; ' + t('%s samples discarded due to processing pause', a.discarded) : '') + '</small></h2></div><div class="panel-body"><div class="row">';
@@ -978,10 +999,8 @@ events.push(function() {
 	 */
 	function renderIfaces(data) {
 		if (!data.ifaces || !data.ifaces.length) { $('#scg_ifaces').html(''); return; }
-		var head = '<div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
-			'<small>' + t('Download / upload as seen from the internet') + '</small>' +
-			'<label class="pull-right scg-toggle"><input type="checkbox" id="scg_ifaces_show"' + (showIfaces ? ' checked' : '') + '> ' + t('Show') + '</label></h2></div>';
-		if (!showIfaces) { $('#scg_ifaces').html(head + '</div>'); return; }
+		var head = '<div class="panel panel-default" data-scg-sec="ifaces"><div class="panel-heading"><h2 class="panel-title">Interfaces ' +
+			'<small>' + t('Download / upload as seen from the internet') + '</small></h2></div>';
 		var showIdle = $('#scg_idleifs').prop('checked'), showVpn = $('#scg_showvpn').prop('checked');
 		var groups = { wan: [], vpn: [], shaped: [], unshaped: [] };
 		var wanDown = 0, wanUp = 0, haveWan = false;
@@ -1045,6 +1064,7 @@ events.push(function() {
 		renderIfaces(data);
 		renderMatrix(data);
 		renderPipes(data);
+		applyToggles();
 	}
 
 	function poll() {
@@ -1065,19 +1085,7 @@ events.push(function() {
 		if (!paused) timer = setTimeout(poll, parseInt($('#scg_interval').val(), 10));
 	}
 	$('#scg_interval').on('change', schedule);
-	$('#scg_hideidle, #scg_idlemode, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); } });
-	/* Interfaces ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
-	$(document).on('change', '#scg_ifaces_show', function() {
-		showIfaces = this.checked;
-		store('ifaces', showIfaces ? '1' : '0');
-		if (prev) renderIfaces(prev);
-	});
-	/* Matrix ein-/ausklappen (Checkbox im Panel-Kopf, wird neu gezeichnet) */
-	$(document).on('change', '#scg_matrix_show', function() {
-		showMatrix = this.checked;
-		store('matrix', showMatrix ? '1' : '0');
-		if (prev) renderMatrix(prev);
-	});
+	$('#scg_hideidle, #scg_idlemode, #scg_unit, #scg_idleifs, #scg_showvpn').on('change', function() { if (prev) { renderIfaces(prev); renderMatrix(prev); renderPipes(prev); applyToggles(); } });
 	$('#scg_pause').on('click', function() {
 		paused = !paused;
 		$(this).html(paused ? '<i class="fa-solid fa-play"></i> ' + t('Resume') : '<i class="fa-solid fa-pause"></i> ' + t('Pause'));

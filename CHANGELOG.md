@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.6
+- Limiter Live: every panel (latency graphs, latency per interface, Autorate,
+  Interfaces, Classes per interface and each limiter) has a *Show* checkbox
+  in its heading. Hidden panels shrink to the heading; the choice is
+  remembered per browser (issue #11).
+
 ## 0.6.5
 - README: corrected the note added in 0.6.4. A filter reload or rule/alias
   change under load keeps CoDel; only changed queues or limiters lose it,

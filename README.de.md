@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.5)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.6)
 
 [English](README.md) · Deutsch
 
@@ -80,6 +80,8 @@ Minutenwerten, die der Dienst in `/var/db/scg_autorate_history.jsonl`
 speichert (48 h; bei RAM-Disk für /var nach Neustart weg). Speedtest-Zeiten
 sind hinterlegt.
 Die Seite funktioniert mit beliebigen Limitern, auch ohne den Generator.
+Jedes Panel hat im Kopf ein Kästchen *Anzeigen*; ausgeblendete Panels
+zeigen nur noch den Kopf (wird pro Browser gespeichert).
 
 Für stabile Werte muss `net.inet.ip.dummynet.expire=0` gesetzt sein, sonst
 löscht dummynet kurz leere Queues samt Zählern. Die Seite bietet dafür einen
