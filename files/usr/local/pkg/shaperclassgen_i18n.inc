@@ -224,7 +224,7 @@ function scg_dict_de() {
 		'At or above share' => 'Am oder über dem Anteil',
 		'Free' => 'Frei',
 		'%s: rate %s, fair share %s, %s drops/s' => '%s: Rate %s, fairer Anteil %s, %s Drops/s',
-		'Tick = fair share: limiter bandwidth × weight ÷ sum of the weights of the active queues. A queue may run past its tick when others leave bandwidth unused. Red = drops now, orange = at or above its share, green = below, grey = idle.' => 'Strich = fairer Anteil: Limiter-Bandbreite × Gewicht ÷ Summe der Gewichte der aktiven Queues. Eine Queue darf über ihren Strich hinaus, wenn andere Bandbreite ungenutzt lassen. Rot = verwirft gerade Pakete, orange = am oder über dem Anteil, grün = darunter, grau = Leerlauf.',
+		'Tick = fair share: what the queue can get if it wants more. Like WF2Q+, queues that use less than their share and do not drop leave the rest to the others, split by weight. Red = drops now, orange = at or above its share, green = below, grey = idle.' => 'Strich = fairer Anteil: was die Queue bekommen kann, wenn sie mehr will. Wie bei WF2Q+ geben Queues, die weniger als ihren Anteil nutzen und nichts verwerfen, den Rest nach Gewicht an die anderen ab. Rot = verwirft gerade Pakete, orange = am oder über dem Anteil, grün = darunter, grau = Leerlauf.',
 		'Packets/s' => 'Pakete/s',
 		'No limiters configured.' => 'Keine Limiter konfiguriert.',
 		'Classes per interface' => 'Klassen je Interface',

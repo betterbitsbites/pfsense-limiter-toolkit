@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.8
+- Limiter Live (test): the fair-share tick is computed like WF2Q+ shares the
+  limiter. Queues that use less than their offered share and do not drop
+  are satisfied and leave the rest to the others by weight; this repeats
+  until no queue is left over. Before, queues with a high weight and only a
+  trickle of traffic (e.g. latency probe pings) counted fully and pushed
+  every other tick far too low. Idle queues show what they would get if
+  they started (issue #13).
+
 ## 0.6.7
 - Limiter Live (test): each queue bar has a tick at the queue's fair share,
   i.e. limiter bandwidth × weight ÷ sum of the weights of the active queues

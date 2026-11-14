@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.7)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.8)
 
 [English](README.md) · Deutsch
 
@@ -80,9 +80,10 @@ Minutenwerten, die der Dienst in `/var/db/scg_autorate_history.jsonl`
 speichert (48 h; bei RAM-Disk für /var nach Neustart weg). Speedtest-Zeiten
 sind hinterlegt.
 Die Seite funktioniert mit beliebigen Limitern, auch ohne den Generator.
-Jeder Queue-Balken hat einen Strich beim fairen Anteil der Queue
-(Limiter-Bandbreite × Gewicht ÷ Summe der Gewichte der aktiven Queues;
-markiert als *Test*): rot = verwirft gerade Pakete, orange = am oder über
+Jeder Queue-Balken hat einen Strich beim fairen Anteil der Queue, also
+dem, was sie bekommen kann, wenn sie mehr will (markiert als *Test*;
+berechnet wie WF2Q+ den Limiter aufteilt: Queues, die weniger als ihren
+Anteil nutzen und nichts verwerfen, geben den Rest nach Gewicht ab): rot = verwirft gerade Pakete, orange = am oder über
 dem Anteil, grün = darunter. Jedes Panel hat im Kopf ein Kästchen *Anzeigen*; ausgeblendete Panels
 zeigen nur noch den Kopf (wird pro Browser gespeichert).
 
