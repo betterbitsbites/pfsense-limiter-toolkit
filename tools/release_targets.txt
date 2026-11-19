@@ -1,0 +1,5 @@
+# pfSense versions that get a ready-made package in each GitHub release.
+# One line per version: <pfSense version> <pkg ABI of that version>
+# The ABI is what `pkg config abi` prints on that pfSense.
+# The asset is named pfSense-<version>-pkg-ShaperClassGen.pkg.
+2.8.1 FreeBSD:15:amd64

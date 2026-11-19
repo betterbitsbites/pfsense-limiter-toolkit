@@ -58,7 +58,8 @@ History of changes: `CHANGELOG.md`.
 | `files/usr/local/www/status_limiters_live.php` | Limiter Live (polls `?getstats`, `?longhist`) |
 | `files/usr/local/www/status_speedtest.php` | Speedtest page |
 | `files/usr/local/pkg/shaperclassgen.xml`, `info.xml`, `priv.inc` | Package metadata, menus, privileges |
-| `install.sh` / `uninstall.sh` | Builds a real pkg on pfSense (`pkg create`) and installs it |
+| `install.sh` / `uninstall.sh` | Builds a real pkg on pfSense (`pkg create`) and installs it; `--build <ABI> <file>` only builds |
+| `tools/build_release.sh`, `tools/release_targets.txt`, `.github/workflows/release.yml` | Release assets: one package per pfSense version |
 | `tests/` | Stubs, fakes and smoke tests (see below) |
 | `docs/images/` | README screenshots (polished GUI screenshots) |
 
@@ -135,9 +136,14 @@ On a real pfSense: `sh install.sh` as root (tcsh: run `sh` first for
 - Before starting, update the local clone (`git pull`); others (other
   sessions, the GitHub web UI, pull requests) may have pushed.
 - After a change: tests (`tests/run.sh`, `tools/i18n_check.py`), version
-  bump, CHANGELOG entry, push to `main`. For a release, build
-  `pfSense-pkg-ShaperClassGen-<version>.tar.gz` (files, install.sh,
-  uninstall.sh, READMEs, LICENSE in a folder of the same name).
+  bump, CHANGELOG entry, push to `main`.
+- Releases: publish a GitHub release with tag `v<version>`; the workflow
+  `.github/workflows/release.yml` builds in a FreeBSD VM
+  (`tools/build_release.sh`) and attaches one package per line of
+  `tools/release_targets.txt` (`pfSense-<pfSense version>-pkg-ShaperClassGen.pkg`,
+  ABI from `pkg config abi` on that version), the source tarball
+  `pfSense-pkg-ShaperClassGen-<version>.tar.gz` and `SHA256SUMS`. A new
+  pfSense version = one new line there plus the install text in both READMEs.
 - Before changing files: restate the request in one or two sentences, name
   the issue it belongs to, and ask if anything is unclear. Never guess issue
   numbers – issues and pull requests share numbers; check `gh issue list` and

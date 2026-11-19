@@ -1,0 +1,42 @@
+# Builds the release packages and attaches them to the GitHub release.
+# Runs when a release is published, or by hand (Actions > Release packages >
+# Run workflow) for an existing release tag.
+name: Release packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach to (e.g. v0.6.9)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build packages on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "15.0"
+          usesh: true
+          copyback: true
+          prepare: |
+            env ASSUME_ALWAYS_YES=yes pkg bootstrap -f
+          run: |
+            sh tools/build_release.sh
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
