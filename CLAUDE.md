@@ -1,6 +1,6 @@
 # pfSense Limiter Toolkit – notes for development
 
-pfSense package `pfSense-pkg-ShaperClassGen` (pfSense CE 2.7/2.8, FreeBSD,
+pfSense package `pfSense-pkg-ShaperClassGen` (pfSense CE 2.7–2.9, FreeBSD,
 PHP 8). Traffic shaping with **limiters** (dummynet, WF2Q+), not ALTQ.
 User-facing documentation: `README.md` (English) and `README.de.md` (German).
 History of changes: `CHANGELOG.md`.

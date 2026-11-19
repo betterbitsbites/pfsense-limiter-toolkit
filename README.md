@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.9) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.10) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -19,16 +19,18 @@ The GUI is English or German, following the pfSense language setting
 
 ## Installation
 
-### Ready-made package (pfSense CE 2.8.1)
+### Ready-made package (pfSense CE 2.8.1 and 2.9.1)
 
 On pfSense as root:
 
-    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-2.8.1-pkg-ShaperClassGen.pkg
+    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-<version>-pkg-ShaperClassGen.pkg
+
+Replace `<version>` with your pfSense version (`2.8.1` or `2.9.1`).
 
 To update, remove the old version first (settings are kept):
 
     pkg-static delete -y pfSense-pkg-ShaperClassGen
-    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-2.8.1-pkg-ShaperClassGen.pkg
+    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-<version>-pkg-ShaperClassGen.pkg
 
 Each [release](https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases)
 has one package per supported pfSense version

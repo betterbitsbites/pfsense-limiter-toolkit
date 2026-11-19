@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.9)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.10)
 
 [English](README.md) · Deutsch
 
@@ -25,14 +25,16 @@ einmal die States zurücksetzen (Diagnostics > States > Reset States).
 
 ## Installation (auf der pfSense, als root)
 
-### Fertiges Paket (pfSense CE 2.8.1)
+### Fertiges Paket (pfSense CE 2.8.1 und 2.9.1)
 
-    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-2.8.1-pkg-ShaperClassGen.pkg
+    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-<version>-pkg-ShaperClassGen.pkg
+
+`<version>` durch die eigene pfSense-Version ersetzen (`2.8.1` oder `2.9.1`).
 
 Update: vorher die alte Version entfernen (Einstellungen bleiben erhalten):
 
     pkg-static delete -y pfSense-pkg-ShaperClassGen
-    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-2.8.1-pkg-ShaperClassGen.pkg
+    pkg-static add https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases/latest/download/pfSense-<version>-pkg-ShaperClassGen.pkg
 
 Jedes [Release](https://github.com/betterbitsbites/pfsense-limiter-toolkit/releases)
 enthält ein Paket pro unterstützter pfSense-Version
