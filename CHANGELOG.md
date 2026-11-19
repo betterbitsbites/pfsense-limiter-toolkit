@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.11
+- Releases also contain `pfSense-2.9.0-pkg-ShaperClassGen.pkg` (same
+  FreeBSD 16 base as 2.9.1).
+
 ## 0.6.10
 - Tested on pfSense CE 2.9.1 (FreeBSD 16): class generator, CoDel on the
   queues, Autorate, Limiter Live and speed test work. Releases now also

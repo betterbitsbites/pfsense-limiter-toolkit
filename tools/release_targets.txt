@@ -3,4 +3,5 @@
 # The ABI is what `pkg config abi` prints on that pfSense.
 # The asset is named pfSense-<version>-pkg-ShaperClassGen.pkg.
 2.8.1 FreeBSD:15:amd64
+2.9.0 FreeBSD:16:amd64
 2.9.1 FreeBSD:16:amd64
