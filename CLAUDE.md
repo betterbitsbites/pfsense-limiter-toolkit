@@ -98,6 +98,9 @@ History of changes: `CHANGELOG.md`.
   median over reflectors of each one's 1-s average (`owdMedian`), a
   direction counts with a rise ≥ threshold/2 and ≥ 25 % of the total; the
   window majority is only the fallback. Only that direction is lowered.
+  Medians present but no direction ≥ threshold/2 → `bloatDir` both false,
+  nothing is lowered (`bloat_unclear`). Reflectors with > 10 % loss per
+  check (≥ 100 pings) are replaced by spares.
   Without fresh timestamp data the last direction is held 10 s
   (`SCG_AR_DIR_HOLD`); pings time out after 4 s; the speed test keeps
   Autorate paused 6 s after the test (`SCG_ST_RESUME_GRACE`). Echo targets

@@ -484,6 +484,8 @@ function scg_dict_de() {
 		'Autorate pings:' => 'Autorate-Pings:',
 		'latency probes (all targets):' => 'Latenz-Proben (alle Ziele):',
 		'held' => 'gehalten',
+		'direction unclear' => 'Richtung unklar',
+		'short spike, no direction clearly congested' => 'kurzer Ausschlag, keine Richtung klar gestaut',
 		'Replies that arrived after 2 s: Autorate pings %s, latency probes %s' => 'Antworten, die erst nach 2 s kamen: Autorate-Pings %s, Latenz-Proben %s',
 	);
 	return $d;

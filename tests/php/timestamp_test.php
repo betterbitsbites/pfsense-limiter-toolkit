@@ -217,3 +217,17 @@ for ($i = 0; $i < 8; $i++) {
 }
 check($ar->dirHeld && $ar->bloatDir === array('up' => true, 'down' => false), 'direction held while timestamps are missing');
 check($ar->dirs['down']['shaper'] >= $down0, 'download not cut during the hold');
+
+/* short spike on half of the reflectors: RTT says congestion, median says no direction -> no cut, no hold */
+$t += 30;
+$ar = mk4();
+run4($ar, 15, array(), $t);
+$all = array();
+foreach (array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4') as $ip) {
+	$all[$ip] = array(80, 2);
+}
+run4($ar, 2, $all, $t);   /* sets the last known direction (upload) */
+$v = run4($ar, 2, array('203.0.113.3' => array(25, 25), '203.0.113.4' => array(25, 25)), $t);
+check($ar->bloat && $ar->bloatDir === array('up' => false, 'down' => false) && !$ar->dirHeld,
+	'spike without clear direction: no direction, not held (' . json_encode($v) . ')');
+check($ar->dirs['down']['state'] === 'bloat_unclear', 'state: short spike, no direction clearly congested');

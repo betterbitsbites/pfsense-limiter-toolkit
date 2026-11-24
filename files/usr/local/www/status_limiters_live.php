@@ -242,6 +242,7 @@ if ($expire !== null && $expire !== 0) {
 			</label>
 			<button type="button" class="btn btn-sm btn-default" id="scg_pause"><i class="fa-solid fa-pause"></i> <?=scg_t('Pause')?></button>
 			<span id="scg_status" class="text-muted"></span>
+			<small class="text-muted pull-right" style="margin-top:6px" title="pfSense-pkg-ShaperClassGen">ShaperClassGen <?=htmlspecialchars(SCG_VERSION)?></small>
 		</form>
 		<p class="help-block" style="margin-bottom:0"><?=scg_t('Rates are calculated from the difference between two queries of <code>dnctl</code> and the interface counters. Bar = share of the limiter bandwidth.<br><b>Limiter set correctly?</b> Check with downloads in two interfaces whether the split matches the weights. If both share about equally despite different weights, the limiter is still too high.')?></p>
 	</div>
@@ -653,7 +654,7 @@ events.push(function() {
 				(prbLoss !== null ? ' &middot; ' + t('latency probes (all targets):') + ' ' + prbLoss + ' %' : '') + '</small></div>';
 		}
 		var bd = a.bloatdir;
-		var dirTxt = bd ? (bd.up && bd.down ? t('both directions') : (bd.up ? 'Upload' : 'Download')) : '';
+		var dirTxt = bd ? (bd.up && bd.down ? t('both directions') : (bd.up ? 'Upload' : (bd.down ? 'Download' : t('direction unclear')))) : '';
 		var title = t('Latency') + ' ' + (a.paused ? '<span class="label label-info">' + t('Speed test running &ndash; Autorate paused') + '</span>' :
 			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + (dirTxt ? ': ' + dirTxt + (a.dirheld ? ' (' + t('held') + ')' : '') : '') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
 			' <small>Pinger ' + esc(a.mode) + (a.pingmode === 'ts' ? ' &middot; ' + (tsUse ? t('ICMP timestamp') : t('ICMP timestamp: no reflector answers, echo in use')) : '') +
@@ -947,7 +948,9 @@ events.push(function() {
 		var wanHist = (a.hist || []).slice(-N).map(function(r) { return [r[0], r[2]]; });
 		if (wanHist.length) now = wanHist[wanHist.length - 1][0];
 		var ws = a.stats || {};
-		var rows = [{ ref: true, name: 'WAN', sub: t('reference, no queue'), weight: null, avg: ws.avg, p95: ws.p95, loss: ws.loss, hist: wanHist }];
+		/* ICMP timestamp: the probes ping the echo targets, so the reference row shows those */
+		var rs = a.refstats || ws;
+		var rows = [{ ref: true, name: 'WAN', sub: t('reference, no queue'), weight: null, avg: rs.avg, p95: rs.p95, loss: rs.loss, hist: wanHist }];
 		var list = a.iflat.map(function(c) {
 			var st = c.stats || {};
 			c.hist.forEach(function(r) { if (r[0] > now) now = r[0]; });

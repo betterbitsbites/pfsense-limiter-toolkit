@@ -184,6 +184,7 @@ function scg_ar_state_texts() {
 		'bloat_idle' => 'congestion without own load',
 		'bloat_lowload' => 'congestion, direction hardly loaded',
 		'bloat_other' => 'congestion in the other direction',
+		'bloat_unclear' => 'short spike, no direction clearly congested',
 		'increase' => 'increasing',
 		'max' => 'maximum',
 		'hold' => 'holding',
@@ -1311,9 +1312,8 @@ class SCGAutorate {
 				$sum = max(0.0, $mu) + max(0.0, $md);
 				$up = $mu >= $half && $mu >= 0.25 * $sum;
 				$down = $md >= $half && $md >= 0.25 * $sum;
-				if ($up || $down) {
-					$this->bloatDir = array('up' => $up, 'down' => $down);
-				}
+				/* Beide false = kurzer Ausschlag, keine Richtung wirklich gestaut: nichts senken */
+				$this->bloatDir = array('up' => $up, 'down' => $down);
 			} elseif ($nd >= $this->winbloat && ($nu || $ndn)) {
 				$this->bloatDir = array('up' => 2 * $nu >= $nd, 'down' => 2 * $ndn >= $nd);
 			}
@@ -1325,8 +1325,11 @@ class SCGAutorate {
 		 */
 		$this->dirHeld = false;
 		if ($this->bloatDir !== null) {
-			$this->lastDir = array($now, $this->bloatDir);
-		} elseif ($this->bloat && $this->tsmode && $this->lastDir !== null && $now - $this->lastDir[0] <= SCG_AR_DIR_HOLD) {
+			if ($this->bloatDir['up'] || $this->bloatDir['down']) {
+				$this->lastDir = array($now, $this->bloatDir);
+			}
+		} elseif ($this->bloat && $this->tsmode && $this->owdMed === null && $this->lastDir !== null && $now - $this->lastDir[0] <= SCG_AR_DIR_HOLD) {
+			/* nur wenn Timestamp-Daten fehlen */
 			$this->bloatDir = $this->lastDir[1];
 			$this->dirHeld = true;
 		}
@@ -1454,7 +1457,9 @@ class SCGAutorate {
 					$x['state'] = 'bloat_min';
 				}
 			} elseif ($this->bloat) {
-				if ($this->bloatDir !== null && empty($this->bloatDir[$d])) {
+				if ($this->bloatDir !== null && !$this->bloatDir['up'] && !$this->bloatDir['down']) {
+					$x['state'] = 'bloat_unclear';
+				} elseif ($this->bloatDir !== null && empty($this->bloatDir[$d])) {
 					$x['state'] = 'bloat_other';
 				} else {
 					$x['state'] = ($this->idle) ? 'bloat_idle' : 'bloat_lowload';
@@ -1533,6 +1538,7 @@ class SCGAutorate {
 			'pingmode' => $this->tsmode ? 'ts' : 'echo', 'tsactive' => $this->tsActive($now),
 			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo,
 			'owdmed' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)),
+			'refstats' => ($this->tsmode && $this->refSamples) ? self::sampleStats($this->refSamples) : null,
 			'late' => $this->late, 'dirheld' => $this->dirHeld, 'cuts' => $this->cuts, 'pcount' => $this->pcount);
 	}
 }
@@ -1961,6 +1967,7 @@ function scg_ar_run() {
 	$ts_spare = array();
 	$ts_sel_mtime = null;
 	$ts_next_spawn = 0;
+	$ts_lossnap = array();
 	if ($ar->tsmode && !$ts_on) {
 		$ar->tsInfo = array('src' => 'none', 'err' => 'ICMP timestamps need the PHP sockets extension');
 	}
@@ -2084,6 +2091,26 @@ function scg_ar_run() {
 						't' => $sel['t'] ?? null, 'err' => $sel['err'] ?? '');
 				}
 				$dead = $ar->deadTs($now);
+				/*
+				 * Reflektoren mit viel Verlust (manche begrenzen Timestamp-Antworten)
+				 * ebenfalls ersetzen: > 10 % seit der letzten Pruefung, mindestens 100 Pings.
+				 */
+				foreach ($ts_used as $ip) {
+					$c = $pinger->count[$ip][0] ?? null;
+					if ($c === null) {
+						continue;
+					}
+					$prev = $ts_lossnap[$ip] ?? array(0, 0);
+					$ns = $c[0] - $prev[0];
+					$na = $c[1] - $prev[1];
+					if ($ns >= 100) {
+						if (($ns - $na) > 0.1 * $ns && !in_array($ip, $dead, true)) {
+							$dead[] = $ip;
+							syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (%.0f %% loss)', $ip, 100 * ($ns - $na) / $ns));
+						}
+						$ts_lossnap[$ip] = array($c[0], $c[1]);
+					}
+				}
 				if ($dead) {
 					foreach ($dead as $ip) {
 						$rep = null;

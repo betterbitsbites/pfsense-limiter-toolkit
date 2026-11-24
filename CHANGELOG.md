@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.16
+- Autorate, ICMP timestamp: when the timestamps say that no direction is
+  clearly congested (both median rises below half the threshold) although a
+  few round-trip samples spiked, nothing is lowered any more (state "short
+  spike, no direction clearly congested"). Before, the last direction was
+  reused or the load rule applied, which lowered upload and download on
+  short spikes. The last direction is now only held when timestamp data is
+  missing (issue #15).
+- Reflectors that lose more than 10 % of their replies (at least 100 pings
+  since the last check) are replaced by a spare. Some hosts rate-limit
+  timestamp replies; two such reflectors showed about 27 % loss and made up
+  the whole "loss" of the latency panel.
+- Latency per interface: in timestamp mode the WAN reference row shows the
+  echo targets (which the probes ping) instead of the reflectors.
+- Limiter Live shows the package version in the top right corner.
+
 ## 0.6.15
 - Speed test: Autorate stays paused 6 s after the test. The modem buffer is
   still full of the test upload at that moment; Autorate took that for
