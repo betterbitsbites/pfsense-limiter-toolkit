@@ -24,10 +24,14 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.22');
+define('SCG_VERSION', '0.6.23');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 /* Signal an den Autorate-Dienst: Konfiguration, Limiter und Probe-Kanaele neu einlesen */
 define('SCG_AR_RELOAD', '/var/run/scg_autorate.reload');
+define('SCG_PFCTL', '/sbin/pfctl');
+/* Zeitpunkt des letzten "Generate / Update": aeltere States haben evtl. keine Queue */
+define('SCG_APPLIED', '/var/db/scg_applied');
+define('SCG_CONNS_SNAP', '/var/run/scg_conns.json');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
 define('SCG_RTAG2', 'SCG Pipe ');  /* Prefix ab 0.1.3: zeigt die Limiter-Pipes */
@@ -1524,6 +1528,7 @@ function scg_apply($s, &$errors, &$msgs) {
 	$rc = scg_dn_recreate();
 	/* Dienst: Konfiguration, Limiter-Nummern und Probe-Kanaele sofort neu einlesen */
 	scg_ar_signal();
+	@file_put_contents(SCG_APPLIED, (string)time());
 	if ($rc !== null && $rc[0] > 0) {
 		$msgs[] = $rc[1] == 0
 			? scg_t('CoDel re-activated on %d queues (limiters re-created).', $rc[0])
@@ -1984,6 +1989,215 @@ function scg_if_kind($if, $real) {
 
 function scg_if_real($if) {
 	return function_exists('get_real_interface') ? get_real_interface($if) : $if;
+}
+
+/* ------------------------------------------------------------------ */
+/* Verbindungen (pf-States): ohne Queue verdaechtig, beenden, zuruecksetzen */
+/* ------------------------------------------------------------------ */
+
+/* Dauer "HH:MM:SS" (Stunden auch ueber 24) in Sekunden */
+function scg_pf_dur($s) {
+	$p = explode(':', $s);
+	return count($p) == 3 ? intval($p[0]) * 3600 + intval($p[1]) * 60 + intval($p[2]) : 0;
+}
+
+/*
+ * Ausgabe von "pfctl -vvss" in States zerlegen. Erste Zeile je State:
+ *   <if> <proto> <links> [(<nat>)] <- | -> <rechts> [(<nat>)] <Zustand>
+ * "<-" = State in Richtung in (links Ziel, rechts Quelle), "->" = out
+ * (links Quelle, rechts Ziel). Klammer links bei out = urspruengliche
+ * Quelle vor NAT, bei in = urspruengliches Ziel vor Port-Weiterleitung.
+ * Liefert array(array('if','proto','dir','left','lnat','right','rnat','state',
+ * 'age','bytes','id','rule'), ...).
+ */
+function scg_states_parse($lines) {
+	$out = array();
+	$cur = null;
+	foreach ($lines as $l) {
+		if (preg_match('/^(\S+) (\S+) (\S+)(?: \((\S+)\))? (<-|->) (\S+)(?: \((\S+)\))?\s+(\S+)\s*$/', $l, $m)) {
+			if ($cur) {
+				$out[] = $cur;
+			}
+			$cur = array('if' => $m[1], 'proto' => $m[2], 'dir' => $m[5] === '<-' ? 'in' : 'out', 'left' => $m[3], 'lnat' => $m[4],
+				'right' => $m[6], 'rnat' => $m[7] ?? '', 'state' => $m[8], 'age' => 0, 'bytes' => 0, 'id' => '', 'rule' => '');
+			continue;
+		}
+		if ($cur === null) {
+			continue;
+		}
+		if (preg_match('/age (\d+:\d+:\d+).*?, ([\d]+):([\d]+) bytes/', $l, $m)) {
+			$cur['age'] = scg_pf_dur($m[1]);
+			$cur['bytes'] = (float)$m[2] + (float)$m[3];
+		} elseif (preg_match('/^\s*id: ([0-9a-f]+) creatorid: ([0-9a-f]+)/', $l, $m)) {
+			$cur['id'] = $m[1] . '/' . $m[2];
+		} elseif (preg_match('/^\s*rule: .*?label "descr=([^"]*)"/', $l, $m)) {
+			$cur['rule'] = $m[1];
+		}
+	}
+	if ($cur) {
+		$out[] = $cur;
+	}
+	return $out;
+}
+
+/* Adresse ohne Port: "1.2.3.4:443" -> "1.2.3.4", "2001:db8::1[443]" -> "2001:db8::1" */
+function scg_pf_host($a) {
+	if (preg_match('/^(.*)\[\d+\]$/', $a, $m)) {
+		return $m[1];
+	}
+	return preg_replace('/:\d+$/', '', $a);
+}
+
+/*
+ * Verbindungen, die an den Limitern vorbei laufen koennen, nach Rate:
+ *   old     - geshaptes Interface, State aelter als das letzte "Generate / Update"
+ *             (vielleicht ohne oder mit veralteter Queue)
+ *   portfwd - aus dem Internet gestartet (Port-Weiterleitung): nie geshapt
+ *   self    - pfSense selbst (Quelle = WAN-Adresse, z. B. VPN-Tunnel)
+ * Rate aus dem Byte-Unterschied zur letzten Abfrage. Liefert
+ * array('t', 'applied', 'list' => array(...), 'total' => Anzahl States).
+ */
+function scg_conn_list($lines = null, $now = null, $limit = 40) {
+	$now = $now ?? microtime(true);
+	if ($lines === null) {
+		$lines = array();
+		exec(SCG_PFCTL . ' -vvss 2>/dev/null', $lines);
+	}
+	$states = scg_states_parse($lines);
+	$descr = get_configured_interface_with_descr();
+	$wan = array();
+	foreach (scg_wan_interfaces() as $if) {
+		$wan[scg_if_real($if)] = $if;
+	}
+	$shaped = array();
+	$set = scg_load_settings();
+	foreach ((array)($set['vlans'] ?? array()) as $v) {
+		if (!empty($v['enable']) && !empty($v['if'])) {
+			$shaped[scg_if_real($v['if'])] = $v['if'];
+		}
+	}
+	$realdescr = array();
+	foreach ($descr as $if => $d) {
+		$realdescr[scg_if_real($if)] = $d;
+	}
+	$applied = (int)@file_get_contents(SCG_APPLIED);
+	$prev = json_decode((string)@file_get_contents(SCG_CONNS_SNAP), true);
+	$dt = is_array($prev) ? $now - ($prev['t'] ?? 0) : 0;
+	$pb = (is_array($prev) && $dt > 0 && $dt < 120) ? ($prev['b'] ?? array()) : array();
+	/* Gegenstuecke: NAT-State am WAN zur LAN-Seite, Innen-State zur Port-Weiterleitung */
+	$natpair = array();
+	$inpair = array();
+	foreach ($states as $s) {
+		if (isset($wan[$s['if']]) && $s['dir'] === 'out' && $s['lnat'] !== '') {
+			$natpair[$s['lnat'] . '|' . $s['right']] = $s['id'];
+		} elseif (!isset($wan[$s['if']]) && $s['dir'] === 'out') {
+			$inpair[$s['left'] . '|' . $s['right']] = $s['id'];
+		}
+	}
+	$snap = array();
+	$list = array();
+	foreach ($states as $s) {
+		if ($s['id'] === '') {
+			continue;
+		}
+		$snap[$s['id']] = $s['bytes'];
+		$grp = null;
+		$client = $remote = '';
+		$ids = array($s['id']);
+		if (isset($shaped[$s['if']]) && $s['dir'] === 'in') {
+			if ($applied > 0 && $s['age'] > $now - $applied) {
+				$grp = 'old';
+				$client = $s['right'];
+				$remote = $s['left'];
+				if (isset($natpair[$s['right'] . '|' . $s['left']])) {
+					$ids[] = $natpair[$s['right'] . '|' . $s['left']];
+				}
+			}
+		} elseif (isset($wan[$s['if']]) && $s['dir'] === 'in' && $s['lnat'] !== '') {
+			$grp = 'portfwd';
+			$client = $s['left'];
+			$remote = $s['right'];
+			if (isset($inpair[$s['right'] . '|' . $s['left']])) {
+				$ids[] = $inpair[$s['right'] . '|' . $s['left']];
+			}
+		} elseif (isset($wan[$s['if']]) && $s['dir'] === 'out' && $s['lnat'] === '') {
+			$grp = 'self';
+			$client = $s['left'];
+			$remote = $s['right'];
+		}
+		if ($grp === null) {
+			continue;
+		}
+		$rate = isset($pb[$s['id']]) && $s['bytes'] >= $pb[$s['id']] ? ($s['bytes'] - $pb[$s['id']]) * 8 / $dt : null;
+		$list[] = array('grp' => $grp, 'if' => $s['if'], 'ifdescr' => $realdescr[$s['if']] ?? $s['if'], 'proto' => $s['proto'],
+			'client' => $client, 'remote' => $remote, 'age' => $s['age'], 'bytes' => $s['bytes'], 'rate' => $rate,
+			'rule' => $s['rule'], 'ids' => implode(',', $ids));
+	}
+	@file_put_contents(SCG_CONNS_SNAP, json_encode(array('t' => $now, 'b' => $snap)));
+	usort($list, function ($a, $b) {
+		$ra = $a['rate'] ?? -1;
+		$rb = $b['rate'] ?? -1;
+		return ($rb <=> $ra) ?: ($b['bytes'] <=> $a['bytes']);
+	});
+	return array('t' => $now, 'applied' => $applied, 'total' => count($states), 'list' => array_slice($list, 0, $limit));
+}
+
+/* States anhand ihrer IDs ("id/creatorid", kommagetrennt) beenden; liefert die Anzahl */
+function scg_conn_kill($ids) {
+	$n = 0;
+	foreach (explode(',', (string)$ids) as $id) {
+		$id = trim($id);
+		if (!preg_match('/^[0-9a-f]{1,16}\/[0-9a-f]{1,8}$/', $id)) {
+			continue;
+		}
+		exec(SCG_PFCTL . ' -k id -k ' . escapeshellarg($id) . ' 2>&1', $o, $rc);
+		$n += ($rc == 0) ? 1 : 0;
+	}
+	return $n;
+}
+
+/*
+ * Alle Verbindungen eines (nicht-WAN-)Interfaces beenden: States des
+ * Interfaces leeren und die zugehoerigen NAT-States am WAN ebenfalls.
+ * Liefert die Anzahl beendeter States oder null bei ungueltigem Interface.
+ */
+function scg_if_reset_states($if, $lines = null) {
+	$descr = get_configured_interface_with_descr();
+	if (!isset($descr[$if]) || scg_if_is_wan($if)) {
+		return null;
+	}
+	$real = scg_if_real($if);
+	if ($real === '' || !preg_match('/^[A-Za-z0-9_.]+$/', $real)) {
+		return null;
+	}
+	if ($lines === null) {
+		$lines = array();
+		exec(SCG_PFCTL . ' -vvss 2>/dev/null', $lines);
+	}
+	$states = scg_states_parse($lines);
+	$wan = array();
+	foreach (scg_wan_interfaces() as $w) {
+		$wan[scg_if_real($w)] = true;
+	}
+	$natpair = array();
+	foreach ($states as $s) {
+		if (isset($wan[$s['if']]) && $s['dir'] === 'out' && $s['lnat'] !== '') {
+			$natpair[$s['lnat'] . '|' . $s['right']] = $s['id'];
+		}
+	}
+	$pairs = array();
+	$n = 0;
+	foreach ($states as $s) {
+		if ($s['if'] !== $real) {
+			continue;
+		}
+		$n++;
+		if ($s['dir'] === 'in' && isset($natpair[$s['right'] . '|' . $s['left']])) {
+			$pairs[] = $natpair[$s['right'] . '|' . $s['left']];
+		}
+	}
+	exec(SCG_PFCTL . ' -i ' . escapeshellarg($real) . ' -Fs 2>&1');
+	return $n + scg_conn_kill(implode(',', $pairs));
 }
 
 /* Zaehler aller zugewiesenen Interfaces */

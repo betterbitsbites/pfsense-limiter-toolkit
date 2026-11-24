@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.22)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.23)
 
 [English](README.md) · Deutsch
 
@@ -109,6 +109,19 @@ zeigen nur noch den Kopf (wird pro Browser gespeichert).
 Für stabile Werte muss `net.inet.ip.dummynet.expire=0` gesetzt sein, sonst
 löscht dummynet kurz leere Queues samt Zählern. Die Seite bietet dafür einen
 Knopf an (setzt den Wert sofort und als System Tunable).
+
+### Verbindungen und States
+
+- **States zurücksetzen** neben jedem Interface im Panel *Interfaces* beendet
+  alle Verbindungen dieses Interfaces; Programme verbinden sich über die
+  aktuellen Queues neu (sinnvoll nach „Generate / Update“).
+- **Verbindungen, die an den Limitern vorbei laufen können** listet nach Rate
+  die Verbindungen geshapter Interfaces, die vor dem letzten „Generate /
+  Update“ begannen, aus dem Internet gestartete Verbindungen
+  (Port-Weiterleitungen, derzeit nicht geshapt) und Verbindungen der pfSense
+  selbst, jeweils mit **Kill**-Knopf. pf zeigt nicht, welche Queue eine
+  Verbindung nutzt; es sind also Kandidaten. Wer Limiter Live öffnen darf,
+  kann die Knöpfe benutzen.
 
 ### Latenz je Interface
 

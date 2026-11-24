@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.22) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.23) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -202,6 +202,19 @@ Autorate state. The service keeps the last 5 minutes of latency, limit and throu
 
 For stable values `net.inet.ip.dummynet.expire=0` is needed; the page offers a
 button that sets it immediately and as a system tunable.
+
+### Connections and states
+
+- **Reset states** next to each interface in the Interfaces panel ends all
+  connections of that interface; programs reconnect through the current
+  queues (useful after "Generate / Update").
+- **Connections that may bypass the limiters** lists, sorted by rate, the
+  connections of shaped interfaces that started before the last
+  "Generate / Update", connections started from the internet (port
+  forwards, currently not shaped) and connections of pfSense itself, each
+  with a **Kill** button. pf does not show which queue a connection uses,
+  so these are candidates. Anyone with access to Limiter Live can use the
+  buttons.
 
 ### Latency per interface
 

@@ -82,6 +82,27 @@ if (isset($_GET['getstats'])) {
 	exit;
 }
 
+/* Verbindungen, die an den Limitern vorbei laufen koennen (nur wenn das Panel offen ist) */
+if (isset($_GET['conns'])) {
+	header("Content-Type: application/json");
+	header("Cache-Control: no-store");
+	echo json_encode(scg_conn_list());
+	exit;
+}
+
+/* Einzelne Verbindung beenden / alle Verbindungen eines Interfaces zuruecksetzen (AJAX) */
+if ($_POST && in_array($_POST['act'] ?? '', array('killconn', 'resetif'), true)) {
+	header("Content-Type: application/json");
+	header("Cache-Control: no-store");
+	if ($_POST['act'] === 'killconn') {
+		echo json_encode(array('killed' => scg_conn_kill($_POST['ids'] ?? '')));
+	} else {
+		$n = scg_if_reset_states((string)($_POST['if'] ?? ''));
+		echo json_encode($n === null ? array('error' => scg_t('Unknown interface.')) : array('killed' => $n));
+	}
+	exit;
+}
+
 /* Langzeitverlauf (Minutenwerte des Autorate-Dienstes) */
 if (isset($_GET['longhist'])) {
 	header("Content-Type: application/json");
@@ -255,6 +276,7 @@ if ($expire !== null && $expire !== 0) {
 <div id="scg_iflat"></div>
 <div id="scg_autorate"></div>
 <div id="scg_ifaces"></div>
+<div id="scg_conns"></div>
 <div id="scg_matrix"></div>
 <div id="scg_pipes"><div class="panel panel-default"><div class="panel-body"><?=scg_t('Loading data ...')?></div></div></div>
 
@@ -1106,6 +1128,10 @@ events.push(function() {
 				if (!showIdle && idle && g !== 'wan') return;
 				if (g === 'vpn' && !showVpn) return;
 				var typ = g === 'shaped' ? '<span class="label label-success">' + t('shaped') + ' (' + esc(SHAPED[i.if]) + ')</span>' : labels[g];
+				if (g === 'shaped' || g === 'unshaped') {
+					typ += ' <button type="button" class="btn btn-xs btn-default scg-resetif" data-if="' + esc(i.if) + '" data-descr="' + esc(i.descr) + '" title="' +
+						esc(t('End all connections of this interface; they restart through the current queues')) + '"><i class="fa-solid fa-rotate-left"></i> ' + t('Reset states') + '</button>';
+				}
 				body += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(i.descr) + ' <small class="text-muted">' + esc(i.real) + '</small></td><td>' + typ + '</td>' +
 					'<td class="scg-num">' + fmtRate(i.down) + '</td><td class="scg-num">' + fmtRate(i.up) + '</td></tr>';
 			});
@@ -1134,6 +1160,73 @@ events.push(function() {
 			'<table class="table table-condensed" style="margin-bottom:0"><thead><tr><th>Interface</th><th>' + t('Type') + '</th>' +
 			'<th class="scg-num">&darr; Download</th><th class="scg-num">&uarr; Upload</th></tr></thead><tbody>' + rows + summary +
 			'</tbody></table></div></div>');
+	}
+
+	/* AJAX-POST mit CSRF-Token von pfSense */
+	function postAct(params) {
+		if (typeof csrfMagicToken !== 'undefined') params[typeof csrfMagicName !== 'undefined' ? csrfMagicName : '__csrf_magic'] = csrfMagicToken;
+		return $.ajax({ url: 'status_limiters_live.php', type: 'POST', data: params, dataType: 'json' });
+	}
+	$(document).on('click', '.scg-resetif', function() {
+		var b = $(this);
+		if (!confirm(t('Reset all connections of %s? Running downloads, calls and games of this interface are interrupted and reconnect through the current queues.', b.data('descr')))) return;
+		b.prop('disabled', true);
+		postAct({ act: 'resetif', 'if': b.data('if') }).done(function(r) {
+			b.replaceWith('<small class="text-muted">' + (r.error ? esc(r.error) : t('%s connections ended', r.killed)) + '</small>');
+		}).fail(function() { b.prop('disabled', false); alert(t('Query failed')); });
+	});
+	$(document).on('click', '.scg-killconn', function() {
+		var b = $(this);
+		b.prop('disabled', true);
+		postAct({ act: 'killconn', ids: b.data('ids') }).done(function() {
+			b.closest('tr').addClass('scg-idle').find('td:last').html('<small class="text-muted">' + t('ended') + '</small>');
+		}).fail(function() { b.prop('disabled', false); alert(t('Query failed')); });
+	});
+
+	/* Verbindungen, die an den Limitern vorbei laufen koennen: alle 6 s, nur wenn das Panel offen ist */
+	var CONN_GRP = {
+		old: ['label-warning', t('older than last Generate / Update')],
+		portfwd: ['label-danger', t('port forward, never shaped')],
+		self: ['label-default', t('pfSense itself')]
+	};
+	function fmtAge(s) {
+		var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+		return h ? h + ' h ' + m + ' min' : (m ? m + ' min' : s + ' s');
+	}
+	function renderConns(d) {
+		var rows = '';
+		(d.list || []).forEach(function(c) {
+			var g = CONN_GRP[c.grp];
+			rows += '<tr><td><span class="label ' + g[0] + '">' + g[1] + '</span></td><td>' + esc(c.ifdescr) + ' <small class="text-muted">' + esc(c.proto) + '</small></td>' +
+				'<td>' + esc(c.client) + '</td><td>' + esc(c.remote) + (c.rule ? ' <small class="text-muted">' + esc(c.rule) + '</small>' : '') + '</td>' +
+				'<td class="scg-num">' + fmtAge(c.age) + '</td><td class="scg-num">' + (c.rate === null ? '–' : fmtRate(c.rate)) + '</td>' +
+				'<td><button type="button" class="btn btn-xs btn-danger scg-killconn" data-ids="' + esc(c.ids) + '" title="' + esc(t('End this connection')) + '">' +
+				'<i class="fa-solid fa-xmark"></i> Kill</button></td></tr>';
+		});
+		var body = rows ? '<table class="table table-condensed" style="margin-bottom:0"><thead><tr><th>' + t('Why') + '</th><th>Interface</th><th>' + t('Client') + '</th>' +
+			'<th>' + t('Remote') + '</th><th class="scg-num">' + t('Age') + '</th><th class="scg-num">' + t('Rate') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+			: '<p class="text-muted" style="margin:0">' + t('None found.') + '</p>';
+		var p = $('#scg_conns .panel');
+		var html = '<div class="panel panel-default" data-scg-sec="conns"><div class="panel-heading"><h2 class="panel-title">' + t('Connections that may bypass the limiters') +
+			' <small>' + t('%s states', d.total) + (d.applied ? ' &middot; ' + t('last Generate / Update') + ' ' + new Date(d.applied * 1000).toLocaleString() : '') + '</small></h2></div>' +
+			'<div class="table-responsive panel-body">' + body + '<p class="help-block" style="margin:6px 0 0">' +
+			t('pf does not show which connection uses which queue, so this list shows candidates: connections of shaped interfaces that started before the last Generate / Update (they may have no queue or an outdated one; ending them makes the program reconnect through the current queues), connections started from the internet (port forwards are not shaped yet), and connections of pfSense itself (e.g. VPN tunnels, not shaped by design). Rate = since the previous query.') +
+			'</p></div></div>';
+		$('#scg_conns').html(html);
+		applyToggles();
+	}
+	var connTimer = null;
+	function pollConns() {
+		clearTimeout(connTimer);
+		var open = load(secKey('conns')) !== '0';
+		if (paused || !open) {
+			if (!$('#scg_conns .panel').length) renderConns({ list: [], total: '–' });
+			connTimer = setTimeout(pollConns, 6000);
+			return;
+		}
+		$.ajax({ url: 'status_limiters_live.php', data: { conns: 1 }, dataType: 'json', cache: false })
+			.done(renderConns)
+			.always(function() { connTimer = setTimeout(pollConns, 6000); });
 	}
 
 	function renderAll(data) {
@@ -1172,6 +1265,7 @@ events.push(function() {
 		if (!paused) { prev = null; poll(); }
 	});
 	poll();
+	pollConns();
 	/* Langzeitgraph: eigene Abfrage, neue Minutenwerte gibt es nur einmal pro Minute */
 	fetchLong();
 	setInterval(function() { if (!paused) fetchLong(); }, 60000);

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Fake pfctl: "-vvss" prints a few states (documentation addresses), everything else is logged.
+D=$(cd "$(dirname "$0")" && pwd)
+case "$*" in
+*-vvss*)
+cat <<'S'
+igb1 tcp 192.0.2.10:443 <- 10.0.1.5:40000       ESTABLISHED:ESTABLISHED
+   [1 + 2] wscale 7  [3 + 4] wscale 7
+   age 05:00:00, expires in 23:59:59, 100:200 pkts, 1000:2000000 bytes, anchor 0, rule 300
+   id: aaaa000000000001 creatorid: 0000abcd
+   rule: pass in quick on igb1 inet from <LAN__NETWORK> to any flags S/SA keep state (if-bound) label "descr=Default allow LAN" ridentifier 1
+igb0 tcp 203.0.113.7:51000 (10.0.1.5:40000) -> 192.0.2.10:443       ESTABLISHED:ESTABLISHED
+   [3 + 4] wscale 7  [1 + 2] wscale 7
+   age 05:00:00, expires in 23:59:59, 100:200 pkts, 1000:2000000 bytes, anchor 3, rule 123, allow-opts
+   id: bbbb000000000002 creatorid: 0000abcd
+   rule: pass out route-to inet from 203.0.113.7 to any keep state (if-bound) label "descr=let out anything from firewall host itself" ridentifier 2
+igb1 tcp 192.0.2.11:443 <- 10.0.1.6:40001       ESTABLISHED:ESTABLISHED
+   age 00:00:30, expires in 23:59:59, 10:20 pkts, 500:9000 bytes, anchor 0, rule 300
+   id: aaaa000000000003 creatorid: 0000abcd
+igb0 udp 10.0.3.20:27015 (203.0.113.7:27015) <- 198.51.100.50:5000       MULTIPLE:MULTIPLE
+   age 00:20:00, expires in 00:01:00, 1000:900 pkts, 300000:250000 bytes, rule 140
+   id: cccc000000000004 creatorid: 0000abcd
+   rule: pass in quick on igb0 inet proto udp from any to 10.0.3.20 port 27015 keep state label "descr=NAT game server" ridentifier 3
+igb1.30 udp 198.51.100.50:5000 -> 10.0.3.20:27015       MULTIPLE:MULTIPLE
+   age 00:20:00, expires in 00:01:00, 1000:900 pkts, 300000:250000 bytes, rule 99
+   id: dddd000000000005 creatorid: 0000abcd
+igb0 udp 203.0.113.7:1194 -> 192.0.2.99:1194       MULTIPLE:MULTIPLE
+   age 01:00:00, expires in 00:01:00, 5000:5000 pkts, 4000000:3000000 bytes, rule 123
+   id: eeee000000000006 creatorid: 0000abcd
+   rule: pass out route-to inet from 203.0.113.7 to any keep state label "descr=let out anything from firewall host itself" ridentifier 2
+S
+;;
+*) echo "$*" >> "$D/run/pfctl.log" ;;
+esac
+exit 0

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.23
+- Limiter Live, Interfaces: a "Reset states" button per shaped and
+  unshaped interface ends all connections of that interface (and their NAT
+  states at the WAN), so they restart through the current queues; with
+  confirmation (issue #18).
+- Limiter Live: new panel "Connections that may bypass the limiters". pf
+  does not show which connection uses which queue, so it lists candidates
+  from `pfctl -vvss`, sorted by rate, each with a "Kill" button:
+  connections of shaped interfaces that started before the last
+  "Generate / Update" (may have no or an outdated queue), connections
+  started from the internet (port forwards, not shaped, see issue #19) and
+  connections of pfSense itself (e.g. VPN tunnels). Queried every 6 s only
+  while the panel is shown.
+- "Generate / Update" stores its time (`/var/db/scg_applied`).
+
 ## 0.6.22
 - Reflector health checks (no answer, high loss, high base latency) are
   skipped while Autorate is paused (speed test) and for 10 s after it, and

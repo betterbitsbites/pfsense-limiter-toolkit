@@ -121,6 +121,14 @@ History of changes: `CHANGELOG.md`.
   the settings. Each channel needs its own ICMP ID (pf keys ICMP states by
   ID; a shared ID would reuse the unmarked state without queue); IDs rotate
   every 5 min and on config changes.
+- **Connections (Limiter Live):** pf states from `pfctl -vvss`
+  (`scg_states_parse`); pfctl does not print a state's dummynet queue, so
+  `scg_conn_list` shows candidates (older than `/var/db/scg_applied`, port
+  forwards = WAN in-state with rdr, pfSense itself = WAN out-state without
+  NAT). Kill by state ID (`pfctl -k id -k <id>/<creatorid>`, both the
+  interface state and its WAN/inside pair); reset per interface with
+  `pfctl -i <real> -Fs` plus the WAN NAT pairs. AJAX POSTs send the
+  csrf-magic token.
 - **Service config re-read:** the long-running service re-reads the config
   with `scg_cfg_reload()` (`config_read_file(true, false)` on 2.7+;
   `parse_config()` does not exist on 2.9) when `config.xml` changes or when
