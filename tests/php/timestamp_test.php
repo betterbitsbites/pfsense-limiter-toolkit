@@ -242,3 +242,31 @@ $win = array('203.0.113.1' => array(150, 122), '203.0.113.2' => array(150, 112),
 	'203.0.113.4' => array(150, 130), '192.0.2.1' => array(150, 136), '192.0.2.2' => array(150, 137));
 check(scg_ar_lossy($win, $cand) === array(), 'general loss during congestion (9–25 %): nothing replaced');
 check(scg_ar_lossy(array('203.0.113.1' => array(50, 10)), $cand) === array(), 'too few pings: nothing replaced');
+
+/* base latency outliers */
+$o = scg_ar_base_outliers(array('203.0.113.1' => 11.0, '203.0.113.2' => 14.0, '203.0.113.3' => 42.0, '203.0.113.4' => 210.0));
+check(array_keys($o) === array('203.0.113.4'), 'reflector with base 210 ms replaced, 42 ms kept: ' . json_encode($o));
+check(scg_ar_base_outliers(array('203.0.113.1' => 11.0, '203.0.113.2' => 300.0)) === array(), 'fewer than 3 reflectors: no outlier decision');
+
+/* replaced reflectors are stored and skipped for 7 days */
+@unlink(SCG_AR_TS_SEL);
+file_put_contents(SCG_AR_TS_SEL, json_encode(array('t' => time(), 'country' => 'AA', 'src' => 'country', 'tested' => 100, 'answered' => 90,
+	'chosen' => array(array('ip' => '203.0.113.1', 'rtt' => 10, 'descr' => 'a', 'city' => ''), array('ip' => '203.0.113.2', 'rtt' => 11, 'descr' => 'b', 'city' => '')),
+	'spare' => array(array('ip' => '203.0.113.3', 'rtt' => 12, 'descr' => 'c', 'city' => '')), 'err' => '',
+	'exclude' => array('198.51.100.9' => time() - 8 * 86400))));
+scg_ts_selection_store(array('203.0.113.1', '203.0.113.3'), array(), array('203.0.113.2'));
+$sel = scg_ts_selection();
+check(array_column($sel['chosen'], 'ip') === array('203.0.113.1', '203.0.113.3') && $sel['chosen'][1]['descr'] === 'c', 'selection file updated with the replacement');
+check(scg_ts_excluded($sel) === array('203.0.113.2') && !isset($sel['exclude']['198.51.100.9']), 'replaced reflector excluded, old exclusions expire after 7 days');
+
+/* own ICMP ID per Autorate target, never equal to a probe channel ID */
+$pg = new SCGPingerSocket();
+$a1 = $pg->icmpId0('203.0.113.1');
+$a2 = $pg->icmpId0('203.0.113.2');
+$pg->rotate0();
+$a1b = $pg->icmpId0('203.0.113.1');
+$probeIds = array();
+for ($ch = 1; $ch <= 16; $ch++) {
+	$probeIds[] = $pg->icmpId($ch) & 63;
+}
+check($a1 != $a2 && $a1b != $a1 && ($a1 & 63) >= 32 && max($probeIds) < 32, 'per-target IDs, rotate, disjoint from probe IDs');

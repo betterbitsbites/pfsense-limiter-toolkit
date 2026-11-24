@@ -101,8 +101,10 @@ History of changes: `CHANGELOG.md`.
   Medians present but no direction ≥ threshold/2 → `bloatDir` both false,
   nothing is lowered (`bloat_unclear`). Reflectors are replaced by spares
   when they lose > 10 % and > 2 × median loss of all Autorate targets + 5
-  points per check (≥ 100 pings, `scg_ar_lossy`); general loss replaces
-  nothing.
+  points per check (≥ 100 pings, `scg_ar_lossy`), or base latency > median
+  of the others + 30 ms; replaced ones are excluded for 7 days in the
+  selection file. Autorate pings use one ICMP ID per target (`icmpId0`,
+  residue 32..63 mod 64, probe channels 1..31), renewed every 5 min.
   Without fresh timestamp data the last direction is held 10 s
   (`SCG_AR_DIR_HOLD`); pings time out after 4 s; the speed test keeps
   Autorate paused 6 s after the test (`SCG_ST_RESUME_GRACE`). Echo targets

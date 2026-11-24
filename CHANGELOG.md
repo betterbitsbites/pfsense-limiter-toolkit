@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.20
+- Autorate pings get their own ICMP ID per target, renewed every 5 minutes
+  (new pf states). Before, all Autorate pings ran under one ID for hours;
+  the same reflectors lost about a quarter of their replies inside the
+  service but almost none in a separate process with a fresh ID (issue #15).
+- Replaced reflectors are stored in the selection file and skipped for
+  7 days, also after a restart and in new selections; before, a restart
+  brought them back from the old selection.
+- Reflectors whose base latency is more than 30 ms above the median of the
+  others are replaced (an overloaded host had drifted to a 210 ms base).
+
 ## 0.6.19
 - Reflector selection, second stage: the best 12 candidates are pinged for
   20 s at the real rate (5/s each); only those with at most 5 % loss are

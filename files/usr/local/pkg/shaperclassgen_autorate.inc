@@ -385,6 +385,8 @@ class SCGPingerSocket {
 	private $seq = 0;
 	private $pending = array();
 	private $gen = array();       /* Kanal => Generation (neue ICMP-ID) */
+	private $slot = array();      /* Autorate-Ziel => Platz fuer die eigene ICMP-ID */
+	private $gen0 = 0;            /* Generation der Autorate-IDs */
 	private $tos = 0;             /* aktuell am Socket gesetzter TOS-Wert */
 	private $expired = array();   /* als verloren gewertete Pings der letzten 10 s: Schluessel => Kanal */
 	public $late = array(0, 0);   /* Antworten nach Ablauf (als verloren gezaehlt): Kanal 0 / Kanaele 1..n */
@@ -413,9 +415,32 @@ class SCGPingerSocket {
 		$this->ok = true;
 	}
 
-	/* ICMP-ID je Kanal und Generation; Kanal 0 behaelt immer dieselbe ID */
+	/* ICMP-ID je Kanal (1..n, Interface-Proben) und Generation: Rest mod 64 = 1..31 */
 	function icmpId($ch) {
 		return ($this->id + $ch + 64 * ($this->gen[$ch] ?? 0)) & 0xffff;
+	}
+
+	/*
+	 * Autorate-Pings (Kanal 0): eigene ICMP-ID je Ziel, neue Generation alle
+	 * paar Minuten (rotate0). Frueher liefen alle Ziele stundenlang unter
+	 * einer ID; Einzeltests mit frischer ID verloren kaum etwas, der Dienst
+	 * bei manchen Zielen ein Viertel. Rest mod 64 = 32..63, also nie gleich
+	 * einer Proben-ID.
+	 */
+	function icmpId0($ip) {
+		if (!isset($this->slot[$ip])) {
+			$this->slot[$ip] = count($this->slot) % 32;
+		}
+		return ($this->id + 32 + $this->slot[$ip] + 64 * $this->gen0) & 0xffff;
+	}
+
+	function rotate0() {
+		$this->gen0++;
+	}
+
+	/* Gehoert die ID zu unseren Autorate-Pings (irgendeine Generation)? */
+	private function isId0($id) {
+		return (($id - $this->id) & 63) >= 32;
 	}
 
 	/*
@@ -461,7 +486,7 @@ class SCGPingerSocket {
 			/* TOS laesst sich nicht setzen: unmarkiert senden wuerde an der Queue vorbei messen */
 			return;
 		}
-		$id = $this->icmpId($ch);
+		$id = $ch > 0 ? $this->icmpId($ch) : $this->icmpId0($ip);
 		$this->seq = ($this->seq + 1) & 0xffff;
 		$payload = pack('J', hrtime(true)) . str_repeat("\0", 8);
 		$hdr = pack('CCnnn', 8, 0, 0, $id, $this->seq);
@@ -492,7 +517,7 @@ class SCGPingerSocket {
 	 */
 	function sendTs($ip) {
 		$this->setTos(0);
-		$id = $this->icmpId(0);
+		$id = $this->icmpId0($ip);
 		$this->seq = ($this->seq + 1) & 0xffff;
 		$t1 = scg_ts_now();
 		$body = pack('NNN', ((int)floor($t1)) % SCG_AR_TS_DAY, 0, 0);
@@ -555,7 +580,7 @@ class SCGPingerSocket {
 				}
 				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1], $ts);
 				unset($this->pending[$k]);
-			} elseif ($h['id'] == $this->icmpId(0)) {
+			} elseif ($this->isId0($h['id'])) {
 				/* Antwort mit unserer ID, aber ohne passende Anfrage (Diagnose) */
 				$this->tally($from, 0, 4);
 			}
@@ -1766,6 +1791,70 @@ function scg_ar_lossy($win, $cand) {
 	return $out;
 }
 
+/*
+ * Grundlatenz-Ausreisser: $bases = ip => Grundlatenz (ms). Ersetzt wird, wer
+ * mehr als 30 ms ueber dem Median der anderen liegt (mindestens 3 Werte).
+ * Liefert ip => array(Grundlatenz, Median der anderen).
+ */
+function scg_ar_base_outliers($bases) {
+	if (count($bases) < 3) {
+		return array();
+	}
+	$out = array();
+	foreach ($bases as $ip => $b) {
+		$o = $bases;
+		unset($o[$ip]);
+		$v = array_values($o);
+		sort($v);
+		$n = count($v);
+		$med = ($n % 2) ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2;
+		if ($b > $med + 30) {
+			$out[$ip] = array($b, $med);
+		}
+	}
+	return $out;
+}
+
+/* Ausgeschlossene Reflektoren der Auswahl (7 Tage gueltig) */
+function scg_ts_excluded($sel) {
+	$out = array();
+	foreach ((array)($sel['exclude'] ?? array()) as $ip => $t) {
+		if ($t > time() - 7 * 86400) {
+			$out[] = $ip;
+		}
+	}
+	return $out;
+}
+
+/* Aktuelle Reflektoren, Ersatz und neu ausgeschlossene in der Auswahldatei speichern */
+function scg_ts_selection_store($used, $spare, $exclude) {
+	$sel = scg_ts_selection();
+	if (!$sel) {
+		return;
+	}
+	$info = array();
+	foreach (array_merge($sel['chosen'] ?? array(), $sel['spare'] ?? array()) as $c) {
+		$info[$c['ip']] = $c;
+	}
+	$row = function ($ip) use ($info) {
+		return $info[$ip] ?? array('ip' => $ip, 'rtt' => null, 'descr' => '', 'city' => '');
+	};
+	$sel['chosen'] = array_map($row, array_values($used));
+	$sel['spare'] = array_map($row, array_values($spare));
+	$ex = array();
+	foreach ((array)($sel['exclude'] ?? array()) as $ip => $t) {
+		if ($t > time() - 7 * 86400) {
+			$ex[$ip] = $t;
+		}
+	}
+	foreach ($exclude as $ip) {
+		$ex[$ip] = time();
+	}
+	$sel['exclude'] = $ex;
+	@file_put_contents(SCG_AR_TS_SEL . '.tmp', json_encode($sel));
+	@rename(SCG_AR_TS_SEL . '.tmp', SCG_AR_TS_SEL);
+}
+
 /* Timestamp-Antwort brauchbar? Standardzeit (geprueft im Pinger) und Sendezeit nicht vor Empfangszeit */
 function scg_ts_valid($ts) {
 	if ($ts === null) {
@@ -1819,7 +1908,17 @@ function scg_ts_select($force_list = false) {
 		$out['err'] = $pinger->err;
 	} else {
 		$out['src'] = $cand['src'];
-		$rows = $cand['rows'];
+		$prev = scg_ts_selection();
+		$ex = $prev ? scg_ts_excluded($prev) : array();
+		$rows = array();
+		foreach ($cand['rows'] as $row) {
+			if (!in_array($row[0], $ex, true)) {
+				$rows[] = $row;
+			}
+		}
+		if ($prev) {
+			$out['exclude'] = array_intersect_key((array)($prev['exclude'] ?? array()), array_flip($ex));
+		}
 		shuffle($rows);
 		$rows = array_slice($rows, 0, SCG_AR_TS_PROBE);
 		$info = array();
@@ -2073,6 +2172,7 @@ function scg_ar_run() {
 	$ts_sel_mtime = null;
 	$ts_next_spawn = 0;
 	$ts_lossnap = array();
+	$next_rot0 = microtime(true) + SCG_AR_LAT_ROTATE;
 	if ($ar->tsmode && !$ts_on) {
 		$ar->tsInfo = array('src' => 'none', 'err' => 'ICMP timestamps need the PHP sockets extension');
 	}
@@ -2174,6 +2274,13 @@ function scg_ar_run() {
 				$latsig = $sig;
 				$next_rotate = $now + SCG_AR_LAT_ROTATE;
 			}
+			/* Autorate-Pings: neue ICMP-IDs (neue pf-States) alle paar Minuten */
+			if ($now >= $next_rot0) {
+				if (method_exists($pinger, 'rotate0')) {
+					$pinger->rotate0();
+				}
+				$next_rot0 = $now + SCG_AR_LAT_ROTATE;
+			}
 			/* Timestamp-Reflektoren: Auswahl uebernehmen, ausgefallene ersetzen, neu auswaehlen */
 			if ($ts_on && $ts_manual) {
 				if (!$ts_used) {
@@ -2188,8 +2295,9 @@ function scg_ar_run() {
 					$ts_sel_mtime = $smt;
 					$sel = scg_ts_selection();
 					if ($sel && !empty($sel['chosen'])) {
-						$ts_used = array_column($sel['chosen'], 'ip');
-						$ts_spare = array_column($sel['spare'] ?? array(), 'ip');
+						$ex = scg_ts_excluded($sel);
+						$ts_used = array_values(array_diff(array_column($sel['chosen'], 'ip'), $ex));
+						$ts_spare = array_values(array_diff(array_column($sel['spare'] ?? array(), 'ip'), $ex));
 						$set_ts($ts_used);
 					}
 					$ar->tsInfo = array('src' => 'auto', 'country' => $sel['country'] ?? '', 'list' => $sel['src'] ?? '',
@@ -2218,6 +2326,19 @@ function scg_ar_run() {
 						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (%.0f %% loss, other targets %.0f %%)', $ip, $info[0], $info[1]));
 					}
 				}
+				/* Grundlatenz weit ueber den anderen: Reflektor ist langsam oder ueberlastet */
+				$bases = array();
+				foreach ($ts_used as $ip) {
+					if (isset($ar->refl[$ip]) && $ar->refl[$ip]['baseline'] !== null && $ar->refl[$ip]['last'] >= $now - 10) {
+						$bases[$ip] = $ar->refl[$ip]['baseline'];
+					}
+				}
+				foreach (scg_ar_base_outliers($bases) as $ip => $info) {
+					if (!in_array($ip, $dead, true)) {
+						$dead[] = $ip;
+						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (base latency %.0f ms, others %.0f ms)', $ip, $info[0], $info[1]));
+					}
+				}
 				if ($dead) {
 					foreach ($dead as $ip) {
 						$rep = null;
@@ -2235,6 +2356,10 @@ function scg_ar_run() {
 					}
 					$ts_used = array_values($ts_used);
 					$set_ts($ts_used);
+					/* Merken: auch nach Neustart und bei der naechsten Auswahl nicht wieder nehmen */
+					scg_ts_selection_store($ts_used, $ts_spare, $dead);
+					clearstatcache(true, SCG_AR_TS_SEL);
+					$ts_sel_mtime = @filemtime(SCG_AR_TS_SEL);
 				}
 				$need = ($smt === false || $smt < time() - SCG_AR_TS_SEL_AGE || count($ts_used) < 2);
 				if ($need && $now >= $ts_next_spawn) {
