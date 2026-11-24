@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.18)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.19)
 
 [English](README.md) · Deutsch
 
@@ -191,9 +191,10 @@ Upload drückt also nicht mehr den Download.
   (rund 15 MB; behalten werden nur die Einträge eines Landes, in
   `/var/db/scg_ts_candidates.json`).
 - Automatische Auswahl: Land des WAN-Anschlusses aus dem Cloudflare-Trace
-  (oder von Hand), 100 zufällige Einträge dreimal getestet, die 4 mit der
-  niedrigsten, gleichmäßigen Ping-Zeit werden genutzt, möglichst aus
-  verschiedenen Netzen. Reflektoren, die nicht mehr antworten, werden durch
+  (oder von Hand), 100 zufällige Einträge dreimal getestet; die besten 12
+  werden danach 20 s mit der echten Rate (5/s) angepingt, nur die mit unter
+  5 % Verlust bleiben. Die 4 mit der niedrigsten, gleichmäßigen Ping-Zeit
+  werden genutzt, möglichst aus verschiedenen Netzen. Reflektoren, die nicht mehr antworten, werden durch
   Ersatz-Reflektoren abgelöst; die Auswahl wird täglich erneuert. Ergebnis in
   `/var/db/scg_ts_reflectors.json`; von Hand mit
   `php -f /usr/local/pkg/shaperclassgen_autorate.php select`.
@@ -203,6 +204,9 @@ Upload drückt also nicht mehr den Download.
   bleiben Echo-Pings).
 - Braucht die PHP-Erweiterung sockets (Raw-Socket, auf pfSense vorhanden);
   ohne sie nutzt der Dienst Echo.
+- Diagnose: `php -f /usr/local/pkg/shaperclassgen_autorate.php probe <ip> ts`
+  pingt einen Host mit dem Pinger des Dienstes in einem eigenen Prozess
+  (auch `echo`, Anzahl und Abstand in ms als weitere Angaben).
 
 Messmodus (Standard an): Der Dienst misst die Latenz auch, wenn Autorate aus
 ist, und verstellt dann keine Limiter. Limiter Live zeigt den Verlauf der

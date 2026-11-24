@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.18) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.19) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -172,8 +172,10 @@ congested direction is lowered, so a full upload no longer cuts the download.
   (about 15 MB; only the entries of one country are kept in
   `/var/db/scg_ts_candidates.json`).
 - Automatic selection: country of the WAN connection from the Cloudflare
-  trace (or set by hand), 100 random entries tested three times, the 4 with
-  the lowest, stable ping time are used, preferably from different networks.
+  trace (or set by hand), 100 random entries tested three times; the best 12
+  are then pinged for 20 s at the real rate (5/s) and only those under 5 %
+  loss are kept. The 4 with the lowest, stable ping time are used,
+  preferably from different networks.
   Reflectors that stop answering are replaced by spares; the selection is
   renewed daily. Result in `/var/db/scg_ts_reflectors.json`; run by hand with
   `php -f /usr/local/pkg/shaperclassgen_autorate.php select`.
@@ -182,6 +184,9 @@ congested direction is lowered, so a full upload no longer cuts the download.
   the reference for the latency per interface (those probes stay echo pings).
 - Needs the PHP sockets extension (raw socket, standard on pfSense); without
   it the service falls back to echo.
+- Diagnosis: `php -f /usr/local/pkg/shaperclassgen_autorate.php probe <ip> ts`
+  pings one host with the service's pinger in its own process (also `echo`,
+  count and interval in ms as further arguments).
 
 Use **Tail Drop** on the limiters themselves; CoDel on the child queues is
 fine and recommended. Autorate only touches the limiters.

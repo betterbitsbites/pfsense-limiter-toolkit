@@ -40,12 +40,17 @@ $msgs = array();
 
 if ($_POST) {
 	$act = $_POST['act'] ?? 'save';
+	/*
+	 * Nach erfolgreicher Aktion umleiten (Post/Redirect/Get): Neu laden der
+	 * Seite schickt das Formular sonst erneut und speichert/startet nochmals.
+	 */
+	$done = null;
 	if ($act == 'restart') {
 		scg_ar_service('restart');
-		$msgs[] = scg_t('Service restarted.');
+		$done = 'restarted';
 	} elseif ($act == 'tsselect') {
 		scg_ts_spawn_select();
-		$msgs[] = scg_t('Reflector selection started. It takes about 10 s, the first time up to a minute (list download); then reload this page.');
+		$done = 'tsselect';
 	} else {
 		$a['enable'] = !empty($_POST['enable']);
 		$a['learnbase'] = !empty($_POST['learnbase']);
@@ -76,15 +81,23 @@ if ($_POST) {
 			scg_store_settings($s);
 			write_config("ShaperClassGen: Autorate settings saved");
 			scg_ar_service('restart');
-			if ($a['enable']) {
-				$msgs[] = scg_t('Saved, service restarted.');
-			} elseif ($a['monitor']) {
-				$msgs[] = scg_t('Saved. Limiter bandwidths restored; the service only measures latency.');
-			} else {
-				$msgs[] = scg_t('Saved, service stopped and limiter bandwidths restored.');
-			}
+			$done = $a['enable'] ? 'saved' : ($a['monitor'] ? 'saved_monitor' : 'saved_off');
 		}
 	}
+	if ($done !== null) {
+		header('Location: firewall_shaper_autorate.php?done=' . $done);
+		exit;
+	}
+}
+$done_msgs = array(
+	'restarted' => scg_t('Service restarted.'),
+	'tsselect' => scg_t('Reflector selection started. It takes about 30 s, the first time up to a minute longer (list download); then reload this page.'),
+	'saved' => scg_t('Saved, service restarted.'),
+	'saved_monitor' => scg_t('Saved. Limiter bandwidths restored; the service only measures latency.'),
+	'saved_off' => scg_t('Saved, service stopped and limiter bandwidths restored.'),
+);
+if (!$_POST && isset($done_msgs[$_GET['done'] ?? ''])) {
+	$msgs[] = $done_msgs[$_GET['done']];
 }
 
 $running = scg_ar_running();

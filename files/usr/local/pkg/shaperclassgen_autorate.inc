@@ -390,6 +390,7 @@ class SCGPingerSocket {
 	public $late = array(0, 0);   /* Antworten nach Ablauf (als verloren gezaehlt): Kanal 0 / Kanaele 1..n */
 	/* Zaehler je Ziel: ip => array(Art => array(gesendet, beantwortet, verspaetet)); Art 0 = Autorate, 1 = Interface-Proben */
 	public $count = array();
+	public $sendErr = array();    /* Fehlercode (errno) => Anzahl fehlgeschlagener Sendungen */
 
 	function __construct() {
 		if (!function_exists('socket_create')) {
@@ -465,9 +466,24 @@ class SCGPingerSocket {
 		$payload = pack('J', hrtime(true)) . str_repeat("\0", 8);
 		$hdr = pack('CCnnn', 8, 0, 0, $id, $this->seq);
 		$pkt = pack('CCnnn', 8, 0, self::cksum($hdr . $payload), $id, $this->seq) . $payload;
-		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), $ch, $ip);
+		$k = $id . '|' . $ip . '|' . $this->seq;
+		$this->pending[$k] = array(hrtime(true), $ch, $ip);
 		$this->tally($ip, $ch, 0);
-		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
+		$this->sendRaw($pkt, $ip, $k, $ch);
+	}
+
+	/*
+	 * Senden; ein Fehler (z. B. ENOBUFS, EPERM durch pf) wird gezaehlt statt
+	 * spaeter als Verlust: Fehlercode => Anzahl in $sendErr, je Ziel Zaehler 3.
+	 */
+	private function sendRaw($pkt, $ip, $k, $ch) {
+		if (@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0) === false) {
+			$e = socket_last_error($this->sock);
+			socket_clear_error($this->sock);
+			$this->sendErr[$e] = ($this->sendErr[$e] ?? 0) + 1;
+			$this->tally($ip, $ch, 3);
+			unset($this->pending[$k]);
+		}
 	}
 
 	/*
@@ -482,9 +498,10 @@ class SCGPingerSocket {
 		$body = pack('NNN', ((int)floor($t1)) % SCG_AR_TS_DAY, 0, 0);
 		$hdr = pack('CCnnn', 13, 0, 0, $id, $this->seq);
 		$pkt = pack('CCnnn', 13, 0, self::cksum($hdr . $body), $id, $this->seq) . $body;
-		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), 0, $ip, $t1);
+		$k = $id . '|' . $ip . '|' . $this->seq;
+		$this->pending[$k] = array(hrtime(true), 0, $ip, $t1);
 		$this->tally($ip, 0, 0);
-		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
+		$this->sendRaw($pkt, $ip, $k, 0);
 	}
 
 	/*
@@ -538,6 +555,9 @@ class SCGPingerSocket {
 				}
 				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1], $ts);
 				unset($this->pending[$k]);
+			} elseif ($h['id'] == $this->icmpId(0)) {
+				/* Antwort mit unserer ID, aber ohne passende Anfrage (Diagnose) */
+				$this->tally($from, 0, 4);
 			}
 		}
 		return $out;
@@ -546,7 +566,8 @@ class SCGPingerSocket {
 	private function tally($ip, $ch, $what) {
 		$kind = $ch > 0 ? 1 : 0;
 		if (!isset($this->count[$ip][$kind])) {
-			$this->count[$ip][$kind] = array(0, 0, 0);
+			/* gesendet, beantwortet, verspaetet, Sendefehler, fremde Antwort */
+			$this->count[$ip][$kind] = array(0, 0, 0, 0, 0);
 		}
 		$this->count[$ip][$kind][$what]++;
 	}
@@ -706,6 +727,7 @@ class SCGAutorate {
 	public $dirHeld = false;        /* bloatDir stammt aus lastDir (Antworten fehlten) */
 	public $cuts = array();         /* letzte Absenkungen (Diagnose) */
 	public $pcount = array();       /* Zaehler je Ziel vom Pinger */
+	public $sendErr = array();      /* Sendefehler vom Pinger: errno => Anzahl */
 	public $tsInfo = array();       /* Herkunft der Reflektoren fuer die Anzeige */
 	private $savedBase = array();
 	private $savedUp = array();
@@ -1539,7 +1561,8 @@ class SCGAutorate {
 			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo,
 			'owdmed' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)),
 			'refstats' => ($this->tsmode && $this->refSamples) ? self::sampleStats($this->refSamples) : null,
-			'late' => $this->late, 'dirheld' => $this->dirHeld, 'cuts' => $this->cuts, 'pcount' => $this->pcount);
+			'late' => $this->late, 'dirheld' => $this->dirHeld, 'cuts' => $this->cuts, 'pcount' => $this->pcount,
+			'senderr' => (object)$this->sendErr);
 	}
 }
 
@@ -1831,7 +1854,59 @@ function scg_ts_select($force_list = false) {
 		foreach ($res as $r) {
 			$out['answered'] += $r['valid'] > 0 ? 1 : 0;
 		}
-		$rk = scg_ts_rank($res);
+		$rk = scg_ts_rank($res, 12, 16);
+		/*
+		 * Zweite Stufe: die 12 besten 20 s lang mit der echten Rate (5/s je
+		 * Reflektor) anfragen. Wer dabei ueber 5 % verliert oder ungueltige
+		 * Zeiten liefert, faellt heraus. Die drei kurzen Runden oben finden
+		 * Hosts nicht, die bei Dauerlast Antworten verlieren.
+		 */
+		$long = array();
+		foreach ($rk['chosen'] as $ip) {
+			$long[$ip] = array('rtt' => array(), 'valid' => 0, 'up' => array(), 'sent' => 0);
+		}
+		$end = microtime(true) + 20;
+		$next = microtime(true);
+		while ($long && microtime(true) < $end) {
+			if (microtime(true) >= $next) {
+				foreach (array_keys($long) as $ip) {
+					$pinger->sendTs($ip);
+					$long[$ip]['sent']++;
+				}
+				$next += 0.2;
+			}
+			foreach ($pinger->receive(20000) as $a) {
+				if (isset($long[$a[0]])) {
+					$long[$a[0]]['rtt'][] = $a[1];
+					if (scg_ts_valid($a[4] ?? null)) {
+						$long[$a[0]]['valid']++;
+						$long[$a[0]]['up'][] = scg_ts_owd($a[4])[0];
+					}
+				}
+			}
+		}
+		$t0 = microtime(true);
+		while (microtime(true) < $t0 + 1.5) {
+			foreach ($pinger->receive(100000) as $a) {
+				if (isset($long[$a[0]])) {
+					$long[$a[0]]['rtt'][] = $a[1];
+					if (scg_ts_valid($a[4] ?? null)) {
+						$long[$a[0]]['valid']++;
+						$long[$a[0]]['up'][] = scg_ts_owd($a[4])[0];
+					}
+				}
+			}
+		}
+		$kept = array();
+		$out['longtest'] = array();
+		foreach ($long as $ip => $l) {
+			$loss = $l['sent'] ? 100.0 * max(0, $l['sent'] - $l['valid']) / $l['sent'] : 100.0;
+			$out['longtest'][$ip] = round($loss, 1);
+			if ($loss <= 5) {
+				$kept[$ip] = $l;
+			}
+		}
+		$rk = scg_ts_rank($kept);
 		$desc = function ($ip) use ($info, $rk) {
 			return array('ip' => $ip, 'rtt' => $rk['score'][$ip] ?? null, 'descr' => $info[$ip][2] ?? '', 'city' => $info[$ip][3] ?? '');
 		};
@@ -2300,6 +2375,7 @@ function scg_ar_run() {
 		if ($now >= $next_status) {
 			$ar->late = isset($pinger->late) ? $pinger->late : array(0, 0);
 			$ar->pcount = isset($pinger->count) ? $pinger->count : array();
+			$ar->sendErr = isset($pinger->sendErr) ? $pinger->sendErr : array();
 			@file_put_contents(SCG_AR_STATUS . '.tmp', json_encode($ar->status($pinger->mode, $pinger->err)));
 			@rename(SCG_AR_STATUS . '.tmp', SCG_AR_STATUS);
 			$next_status = $now + 1;

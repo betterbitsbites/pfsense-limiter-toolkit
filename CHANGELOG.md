@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.19
+- Reflector selection, second stage: the best 12 candidates are pinged for
+  20 s at the real rate (5/s each); only those with at most 5 % loss are
+  kept (`longtest` in `/var/db/scg_ts_reflectors.json`). Three short rounds
+  accepted hosts that lose up to a third of their replies (issue #15).
+- Pinger diagnostics: failed sends are counted with their error code
+  (`senderr` in the status) instead of later counting as loss; replies with
+  the service's ICMP ID that match no request are counted as "stray"
+  (per target in `pcount`).
+- New CLI `shaperclassgen_autorate.php probe <ip> [ts|echo] [count]
+  [interval ms]`: the service's pinger against one host in its own process,
+  to tell network loss from loss inside the running service.
+- Autorate page: redirect after Save, Restart and "Select reflectors now";
+  reloading the page no longer submits the form again (which saved the
+  settings and restarted the service).
+
 ## 0.6.18
 - READMEs: credit for cake-autorate (OpenWrt, lynxthecat and contributors),
   which inspired Autorate (independent implementation for dummynet, no code

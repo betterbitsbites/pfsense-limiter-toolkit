@@ -466,7 +466,7 @@ function scg_dict_de() {
 		'Ping type' => 'Ping-Art',
 		'Reflector "%s" is not an IPv4 address.' => 'Reflektor „%s“ ist keine IPv4-Adresse.',
 		'Reflector country' => 'Land der Reflektoren',
-		'Reflector selection started. It takes about 10 s, the first time up to a minute (list download); then reload this page.' => 'Reflektor-Auswahl gestartet. Sie dauert etwa 10 s, beim ersten Mal bis zu einer Minute (Download der Liste); danach diese Seite neu laden.',
+		'Reflector selection started. It takes about 30 s, the first time up to a minute longer (list download); then reload this page.' => 'Reflektor-Auswahl gestartet. Sie dauert etwa 30 s, beim ersten Mal bis zu einer Minute länger (Download der Liste); danach diese Seite neu laden.',
 		'Select reflectors now' => 'Reflektoren jetzt auswählen',
 		'Two-letter code (e.g. NL). Empty: the country of the WAN connection (from the Cloudflare trace).' => 'Code aus zwei Buchstaben (z. B. NL). Leer: das Land des WAN-Anschlusses (aus dem Cloudflare-Trace).',
 		'Unknown ping type.' => 'Unbekannte Ping-Art.',
