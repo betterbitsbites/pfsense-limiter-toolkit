@@ -639,10 +639,23 @@ events.push(function() {
 				(r.up !== null && r.up !== undefined ? ' &uarr;' + owd(r.up) + ' &darr;' + owd(r.down) : '') +
 				(ref ? ' &middot; ' + t('reference') : '') + (r.lost ? ' &middot; ' + t('%s lost', r.lost) : '') + '</small></span>';
 		});
+		/* Loss since service start per target: Autorate pings vs. latency probes (same targets, but through the queues) */
+		function lossPct(c) { return c && c[0] > 20 ? Math.round(1000 * Math.max(0, c[0] - c[1]) / c[0]) / 10 : null; }
+		var pc = a.pcount || {}, own = '', prb = [0, 0];
+		$.each(pc, function(ip, k) {
+			var l = lossPct(k[0]);
+			if (l !== null) own += (own ? ', ' : '') + esc(ip) + ' ' + l + ' %';
+			if (k[1]) { prb[0] += k[1][0]; prb[1] += k[1][1]; }
+		});
+		var prbLoss = lossPct(prb);
+		if (own || prbLoss !== null) {
+			refl += '<div class="text-muted"><small>' + t('Loss since service start') + ' &ndash; ' + t('Autorate pings:') + ' ' + (own || '–') +
+				(prbLoss !== null ? ' &middot; ' + t('latency probes (all targets):') + ' ' + prbLoss + ' %' : '') + '</small></div>';
+		}
 		var bd = a.bloatdir;
 		var dirTxt = bd ? (bd.up && bd.down ? t('both directions') : (bd.up ? 'Upload' : 'Download')) : '';
 		var title = t('Latency') + ' ' + (a.paused ? '<span class="label label-info">' + t('Speed test running &ndash; Autorate paused') + '</span>' :
-			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + (dirTxt ? ': ' + dirTxt : '') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
+			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + (dirTxt ? ': ' + dirTxt + (a.dirheld ? ' (' + t('held') + ')' : '') : '') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
 			' <small>Pinger ' + esc(a.mode) + (a.pingmode === 'ts' ? ' &middot; ' + (tsUse ? t('ICMP timestamp') : t('ICMP timestamp: no reflector answers, echo in use')) : '') +
 			' &middot; ' + t('Threshold') + ' +' + a.threshold + ' ms' + (a.control ? '' : ' &middot; ' + t('measuring only, Autorate control is off')) + '</small>';
 		$('#scg_latency').html('<div class="panel panel-default" data-scg-sec="latency"><div class="panel-heading"><h2 class="panel-title">' + title + '</h2></div><div class="panel-body">' +

@@ -21,6 +21,7 @@ define('SCG_ST_STATUS', '/var/run/scg_speedtest.json');
 define('SCG_ST_FILE', '/var/tmp/scg_speedtest.bin');
 define('SCG_ST_SCRIPT', '/usr/local/pkg/shaperclassgen_speedtest.php');
 define('SCG_ST_CURL', '/usr/local/bin/curl');
+define('SCG_ST_RESUME_GRACE', 6);   /* s Autorate stays paused after a test */
 
 function scg_st_defaults() {
 	return array(
@@ -336,8 +337,13 @@ function scg_st_pause_autorate($until) {
 	@file_put_contents(SCG_AR_PAUSE, (string)intval($until));
 }
 
+/*
+ * Resume Autorate a few seconds after the test: the modem buffer is still full
+ * of the test upload. Without this grace time Autorate would take that for
+ * congestion, lower the upload and its learned base.
+ */
 function scg_st_resume_autorate() {
-	@unlink(SCG_AR_PAUSE);
+	@file_put_contents(SCG_AR_PAUSE, (string)(time() + SCG_ST_RESUME_GRACE));
 }
 
 /*

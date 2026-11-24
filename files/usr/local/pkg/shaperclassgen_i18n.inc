@@ -480,6 +480,10 @@ function scg_dict_de() {
 		'selection running' => 'Auswahl läuft',
 		'too few in the country, region added' => 'zu wenige im Land, Region dazugenommen',
 		'%s late replies (counted as lost)' => '%s verspätete Antworten (als Verlust gezählt)',
+		'Loss since service start' => 'Verlust seit Dienststart',
+		'Autorate pings:' => 'Autorate-Pings:',
+		'latency probes (all targets):' => 'Latenz-Proben (alle Ziele):',
+		'held' => 'gehalten',
 		'Replies that arrived after 2 s: Autorate pings %s, latency probes %s' => 'Antworten, die erst nach 2 s kamen: Autorate-Pings %s, Latenz-Proben %s',
 	);
 	return $d;

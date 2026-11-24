@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.15
+- Speed test: Autorate stays paused 6 s after the test. The modem buffer is
+  still full of the test upload at that moment; Autorate took that for
+  congestion, lowered the upload and dropped its learned base after every
+  test (issue #15).
+- Autorate, ICMP timestamp: in heavy upload congestion replies come late or
+  not at all, so direction data was missing for a few seconds and Autorate
+  fell back to "lower every loaded direction", cutting the download too.
+  The last direction found from timestamps is now held for up to 10 s
+  (label "held" in Limiter Live).
+- Pings count as lost after 4 s instead of 2 s (upload congestion on cable
+  lines can exceed 2 s).
+- Diagnostics: sent/answered/late counts per target, separately for
+  Autorate pings and latency probes (`pcount`; Limiter Live shows the loss
+  since service start per target), and the last 20 decreases with their
+  reason (`cuts`: owd, held, load, lowload) in `/var/run/scg_autorate.json`.
+
 ## 0.6.14
 - Autorate, ICMP timestamp: steadier direction decision (issue #15). The
   direction is now taken from the median over the reflectors of each

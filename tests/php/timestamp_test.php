@@ -100,6 +100,8 @@ check($ar->dirs['down']['state'] === 'bloat_other', 'download state: congestion 
 $st = $ar->status('socket');
 check($st['stats']['up'] > 20 && abs($st['stats']['down']) < 5 && $st['refl']['203.0.113.5']['up'] > 100, 'status shows upload delay rise');
 check($st['refl']['192.0.2.1']['role'] === 'ref', 'echo target is reference in timestamp mode');
+$lc = end($st['cuts']);
+check($lc && $lc['dir'] === 'up' && $lc['why'] === 'owd', 'cut log in the status: ' . json_encode($lc));
 
 $t += 30;
 $ar = mk('ts');
@@ -194,3 +196,24 @@ $v = run4($ar, 4, $all, $t);
 check(array_keys($v) === array('{"up":true,"down":false}'), 'download rise below half the threshold is not congestion: ' . json_encode($v));
 $st = $ar->status('socket');
 check(is_array($st['owdmed']) && $st['owdmed'][0] > 30 && isset($st['late']), 'status has median rise and late counter');
+
+/* replies without timestamps during heavy congestion: last direction is held, download not cut */
+$t += 30;
+$ar = mk4();
+run4($ar, 15, array(), $t);
+$all = array();
+foreach (array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4') as $ip) {
+	$all[$ip] = array(80, 2);
+}
+run4($ar, 2, $all, $t);
+$down0 = $ar->dirs['down']['shaper'];
+for ($i = 0; $i < 8; $i++) {
+	foreach (array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4') as $ip) {
+		$ar->onRtt($ip, 900, $t);   /* no timestamp data */
+		$t += 0.12;
+	}
+	$ar->tick($t, array(3 => array('bw' => $ar->dirs['down']['shaper'] * 1000, 'bytes' => 0),
+		4 => array('bw' => $ar->dirs['up']['shaper'] * 1000, 'bytes' => 0)), array('down' => 0, 'up' => 0));
+}
+check($ar->dirHeld && $ar->bloatDir === array('up' => true, 'down' => false), 'direction held while timestamps are missing');
+check($ar->dirs['down']['shaper'] >= $down0, 'download not cut during the hold');

@@ -42,6 +42,8 @@ define('SCG_AR_TS_SEL_AGE', 86400);        /* Auswahl taeglich neu testen */
 define('SCG_AR_TS_COUNT', 4);              /* so viele Reflektoren gleichzeitig */
 define('SCG_AR_TS_PROBE', 100);            /* so viele Kandidaten je Auswahl testen */
 define('SCG_AR_TS_DAY', 86400000);         /* ms je Tag: Timestamps laufen um Mitternacht UTC ueber */
+define('SCG_AR_TIMEOUT_MS', 4000);  /* Ping ohne Antwort nach dieser Zeit = Verlust (Upload-Stau erreicht ueber 2 s) */
+define('SCG_AR_DIR_HOLD', 10);      /* s: letzte bekannte Stau-Richtung gilt weiter, wenn Timestamp-Antworten fehlen */
 
 /* ------------------------------------------------------------------ */
 /* Einstellungen                                                       */
@@ -385,6 +387,8 @@ class SCGPingerSocket {
 	private $tos = 0;             /* aktuell am Socket gesetzter TOS-Wert */
 	private $expired = array();   /* als verloren gewertete Pings der letzten 10 s: Schluessel => Kanal */
 	public $late = array(0, 0);   /* Antworten nach Ablauf (als verloren gezaehlt): Kanal 0 / Kanaele 1..n */
+	/* Zaehler je Ziel: ip => array(Art => array(gesendet, beantwortet, verspaetet)); Art 0 = Autorate, 1 = Interface-Proben */
+	public $count = array();
 
 	function __construct() {
 		if (!function_exists('socket_create')) {
@@ -461,6 +465,7 @@ class SCGPingerSocket {
 		$hdr = pack('CCnnn', 8, 0, 0, $id, $this->seq);
 		$pkt = pack('CCnnn', 8, 0, self::cksum($hdr . $payload), $id, $this->seq) . $payload;
 		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), $ch, $ip);
+		$this->tally($ip, $ch, 0);
 		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
 	}
 
@@ -477,6 +482,7 @@ class SCGPingerSocket {
 		$hdr = pack('CCnnn', 13, 0, 0, $id, $this->seq);
 		$pkt = pack('CCnnn', 13, 0, self::cksum($hdr . $body), $id, $this->seq) . $body;
 		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), 0, $ip, $t1);
+		$this->tally($ip, 0, 0);
 		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
 	}
 
@@ -514,12 +520,14 @@ class SCGPingerSocket {
 			if (!isset($this->pending[$k]) && isset($this->expired[$k])) {
 				/* Antwort kam, aber erst nach Ablauf: war als Verlust gezaehlt */
 				$this->late[$this->expired[$k][1] > 0 ? 1 : 0]++;
+				$this->tally($from, $this->expired[$k][1], 2);
 				unset($this->expired[$k]);
 				continue;
 			}
 			if (isset($this->pending[$k])) {
 				/* ip, rtt_ms, Sendezeitpunkt (ns), Kanal, Timestamps */
 				$p = $this->pending[$k];
+				$this->tally($from, $p[1], 1);
 				$ts = null;
 				if ($h['type'] == 14 && isset($p[3]) && strlen($buf) >= $ihl + 20) {
 					$t = unpack('Norig/Nrecv/Nxmit', substr($buf, $ihl + 8, 12));
@@ -532,6 +540,14 @@ class SCGPingerSocket {
 			}
 		}
 		return $out;
+	}
+
+	private function tally($ip, $ch, $what) {
+		$kind = $ch > 0 ? 1 : 0;
+		if (!isset($this->count[$ip][$kind])) {
+			$this->count[$ip][$kind] = array(0, 0, 0);
+		}
+		$this->count[$ip][$kind][$what]++;
 	}
 
 	/* Unbeantwortete Pings nach $ms als verloren werten: array(array(ip, Kanal), ...) */
@@ -685,6 +701,10 @@ class SCGAutorate {
 	public $refSamples = array();   /* Echo-Referenz im Timestamp-Betrieb: array(t, rtt) */
 	public $owdRecent = array();    /* Anstieg je Richtung der letzten 2 s: array(t, ip, hin, zurueck) */
 	public $owdMed = null;          /* Median ueber die Reflektoren im letzten Takt: array(hin, zurueck) */
+	public $lastDir = null;         /* letzte aus Timestamps bestimmte Richtung: array(t, array('up','down')) */
+	public $dirHeld = false;        /* bloatDir stammt aus lastDir (Antworten fehlten) */
+	public $cuts = array();         /* letzte Absenkungen (Diagnose) */
+	public $pcount = array();       /* Zaehler je Ziel vom Pinger */
 	public $tsInfo = array();       /* Herkunft der Reflektoren fuer die Anzeige */
 	private $savedBase = array();
 	private $savedUp = array();
@@ -1298,6 +1318,18 @@ class SCGAutorate {
 				$this->bloatDir = array('up' => 2 * $nu >= $nd, 'down' => 2 * $ndn >= $nd);
 			}
 		}
+		/*
+		 * Grosser Stau: Antworten kommen spaet oder gar nicht, dann fehlen die
+		 * Richtungsdaten. Statt auf "alles Ausgelastete senken" zurueckzufallen,
+		 * gilt die zuletzt bestimmte Richtung noch SCG_AR_DIR_HOLD Sekunden.
+		 */
+		$this->dirHeld = false;
+		if ($this->bloatDir !== null) {
+			$this->lastDir = array($now, $this->bloatDir);
+		} elseif ($this->bloat && $this->tsmode && $this->lastDir !== null && $now - $this->lastDir[0] <= SCG_AR_DIR_HOLD) {
+			$this->bloatDir = $this->lastDir[1];
+			$this->dirHeld = true;
+		}
 		if ($this->bloat) {
 			if ($this->bloatSince === null) {
 				$this->bloatSince = $now;
@@ -1405,6 +1437,12 @@ class SCGAutorate {
 			if ($cut) {
 				if ($now - $x['lastDec'] >= $this->decRefractory) {
 					$new = max($x['min'], min($x['shaper'], $x['achieved']) * $dec);
+					$this->cuts[] = array('t' => round($now, 1), 'dir' => $d, 'from' => round($x['shaper']), 'to' => round($new),
+						'load' => round($load, 2), 'why' => $this->bloatDir === null ? ($load >= 0.5 ? 'load' : 'lowload') : ($this->dirHeld ? 'held' : 'owd'),
+						'owd' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)));
+					if (count($this->cuts) > 20) {
+						array_shift($this->cuts);
+					}
 					$x['lastDec'] = $now;
 					$x['state'] = ($load >= 0.5) ? 'decrease' : 'decrease_low';
 					/* Stau: die gelernte Basis faellt sofort mit, der naechste Start beginnt darunter */
@@ -1495,7 +1533,7 @@ class SCGAutorate {
 			'pingmode' => $this->tsmode ? 'ts' : 'echo', 'tsactive' => $this->tsActive($now),
 			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo,
 			'owdmed' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)),
-			'late' => $this->late);
+			'late' => $this->late, 'dirheld' => $this->dirHeld, 'cuts' => $this->cuts, 'pcount' => $this->pcount);
 	}
 }
 
@@ -2120,7 +2158,7 @@ function scg_ar_run() {
 			}
 		}
 		$last_rx_end = hrtime(true);
-		foreach ($pinger->expire(2000) as $l) {
+		foreach ($pinger->expire(SCG_AR_TIMEOUT_MS) as $l) {
 			if ($l[1] == 0) {
 				$ar->onLost($l[0], microtime(true));
 			} elseif (isset($latch[$l[1]])) {
@@ -2202,6 +2240,7 @@ function scg_ar_run() {
 		}
 		if ($now >= $next_status) {
 			$ar->late = isset($pinger->late) ? $pinger->late : array(0, 0);
+			$ar->pcount = isset($pinger->count) ? $pinger->count : array();
 			@file_put_contents(SCG_AR_STATUS . '.tmp', json_encode($ar->status($pinger->mode, $pinger->err)));
 			@rename(SCG_AR_STATUS . '.tmp', SCG_AR_STATUS);
 			$next_status = $now + 1;
