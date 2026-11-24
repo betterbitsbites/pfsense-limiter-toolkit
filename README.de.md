@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.11)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.12)
 
 [English](README.md) · Deutsch
 
@@ -170,6 +170,34 @@ Kabelsegment), wird der Limiter automatisch nachgeführt.
   konfigurierte Bandbreite wiederhergestellt.
 - Dienst: `/usr/local/etc/rc.d/scg_autorate.sh start|stop|restart|status`,
   Status in `/var/run/scg_autorate.json`, Anzeige in Limiter Live.
+
+**Ping-Art ICMP-Timestamp (je Richtung).** Ein Echo-Ping misst nur Hin- und
+Rückweg zusammen; bei Stau weiß Autorate nicht, welche Richtung voll ist, und
+senkt jede Richtung, die mindestens halb ausgelastet ist. Mit *ICMP-Timestamp*
+schickt der Dienst Timestamp-Anfragen (ICMP-Typ 13). Die Antwort enthält die
+Uhrzeit des Reflektors beim Eintreffen und beim Absenden; damit lässt sich die
+Verzögerung in Upload und Download aufteilen. Die Uhren laufen nicht synchron;
+der feste Versatz fällt heraus, weil nur der Anstieg über die Leerlaufwerte
+jedes Reflektors zählt. Gesenkt wird nur die gestaute Richtung – ein voller
+Upload drückt also nicht mehr den Download.
+
+- Die Reflektoren stammen aus [tievolu/timestamp-reflectors](https://github.com/tievolu/timestamp-reflectors)
+  (nicht im Paket enthalten). Die pfSense lädt die Liste einmal pro Woche
+  (rund 15 MB; behalten werden nur die Einträge eines Landes, in
+  `/var/db/scg_ts_candidates.json`).
+- Automatische Auswahl: Land des WAN-Anschlusses aus dem Cloudflare-Trace
+  (oder von Hand), 100 zufällige Einträge dreimal getestet, die 4 mit der
+  niedrigsten, gleichmäßigen Ping-Zeit werden genutzt, möglichst aus
+  verschiedenen Netzen. Reflektoren, die nicht mehr antworten, werden durch
+  Ersatz-Reflektoren abgelöst; die Auswahl wird täglich erneuert. Ergebnis in
+  `/var/db/scg_ts_reflectors.json`; von Hand mit
+  `php -f /usr/local/pkg/shaperclassgen_autorate.php select`.
+- Statt der automatischen Auswahl lassen sich feste Reflektoren eintragen.
+- Die Echo-Ziele bleiben in Gebrauch: als Ausweichziel, wenn kein Reflektor
+  antwortet, und als Referenz für die Latenz je Interface (deren Proben
+  bleiben Echo-Pings).
+- Braucht die PHP-Erweiterung sockets (Raw-Socket, auf pfSense vorhanden);
+  ohne sie nutzt der Dienst Echo.
 
 Messmodus (Standard an): Der Dienst misst die Latenz auch, wenn Autorate aus
 ist, und verstellt dann keine Limiter. Limiter Live zeigt den Verlauf der

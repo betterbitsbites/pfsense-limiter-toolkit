@@ -90,6 +90,17 @@ History of changes: `CHANGELOG.md`.
   Increase +2 %/tick under load; idle decays to the (learned) base.
   Throughput measured at the WAN interface (VPN tunnels excluded).
   Paused during speed tests (`/var/run/scg_autorate.pause` with expiry).
+- **Ping type ICMP timestamp** (`pingmode` = `ts`): reflectors (role `ctl`)
+  get type-13 requests; upload rise = (t2 − t1) − per-reflector upload
+  baseline, download rise = RTT rise − upload rise. The upload baseline only
+  follows while the RTT rise is below half the threshold (clock drift).
+  Bloat is still decided by RTT; the window entries carry direction flags,
+  the majority sets `bloatDir`, only that direction is lowered. Echo targets
+  get role `ref` (fallback when no reflector answered for 5 s, reference for
+  latency per interface). Reflector list from tievolu/timestamp-reflectors is
+  downloaded, never shipped (no license); selection runs as
+  `shaperclassgen_autorate.php select` in the background
+  (`/var/db/scg_ts_candidates.json`, `/var/db/scg_ts_reflectors.json`).
 - **Latency per interface** (option `latprobe`): one match rule per shaped
   interface on the gateway interfaces, direction out, ICMP echoreq from
   `(self)`, own DSCP (pool 2, max 16) → `U/D_<tag>_<class>`; class selectable

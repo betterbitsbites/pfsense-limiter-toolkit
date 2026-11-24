@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.11) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.12) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -152,6 +152,31 @@ Firewall > Traffic Shaper > Autorate adjusts the running limiter bandwidth
   Stopping or uninstalling restores the configured bandwidth.
 - Measuring mode (default on) records latency even when Autorate is off.
 - Service: `/usr/local/etc/rc.d/scg_autorate.sh start|stop|restart|status`.
+
+**Ping type ICMP timestamp (per direction).** An echo ping only measures the
+round trip, so with congestion Autorate cannot tell which direction is full
+and lowers every direction that is at least half loaded. With *ICMP timestamp*
+the service sends timestamp requests (ICMP type 13). The reply carries the
+reflector's clock time on arrival and departure, which splits the delay into
+upload and download. Clocks are not synchronised; the constant offset cancels
+out because only the rise over each reflector's idle values counts. Only the
+congested direction is lowered, so a full upload no longer cuts the download.
+
+- Reflectors come from [tievolu/timestamp-reflectors](https://github.com/tievolu/timestamp-reflectors)
+  (not shipped with the package). The pfSense downloads the list once a week
+  (about 15 MB; only the entries of one country are kept in
+  `/var/db/scg_ts_candidates.json`).
+- Automatic selection: country of the WAN connection from the Cloudflare
+  trace (or set by hand), 100 random entries tested three times, the 4 with
+  the lowest, stable ping time are used, preferably from different networks.
+  Reflectors that stop answering are replaced by spares; the selection is
+  renewed daily. Result in `/var/db/scg_ts_reflectors.json`; run by hand with
+  `php -f /usr/local/pkg/shaperclassgen_autorate.php select`.
+- Fixed reflectors can be entered instead.
+- The echo targets stay in use: as fallback when no reflector answers, and as
+  the reference for the latency per interface (those probes stay echo pings).
+- Needs the PHP sockets extension (raw socket, standard on pfSense); without
+  it the service falls back to echo.
 
 Use **Tail Drop** on the limiters themselves; CoDel on the child queues is
 fine and recommended. Autorate only touches the limiters.

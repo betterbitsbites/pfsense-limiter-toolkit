@@ -30,6 +30,18 @@ define('SCG_ST_SQUEEZE', '/var/run/scg_speedtest_squeeze.json');
 define('SCG_ST_SQUEEZE_KBIT', 8);   /* Speedtest: Regelung pausiert bis Zeitstempel */
 define('SCG_AR_LAT_MS', 200);       /* Latenz je Interface: ms zwischen zwei Pings eines Interfaces (5/s) */
 define('SCG_AR_LAT_ROTATE', 300);   /* s: neue ICMP-ID je Interface, damit ein alter State ohne Queue nicht bleibt */
+/* ICMP-Timestamp-Reflektoren (Liste: github.com/tievolu/timestamp-reflectors, wird nicht mitgeliefert) */
+define('SCG_AR_TS_URL', 'https://raw.githubusercontent.com/tievolu/timestamp-reflectors/main/reflectors.csv');
+define('SCG_AR_TS_TRACE', 'https://speed.cloudflare.com/cdn-cgi/trace');
+define('SCG_AR_CURL', '/usr/local/bin/curl');
+define('SCG_AR_TS_CAND', '/var/db/scg_ts_candidates.json');   /* gefilterte Kandidaten des Landes */
+define('SCG_AR_TS_SEL', '/var/db/scg_ts_reflectors.json');    /* Auswahl: gewaehlte Reflektoren und Ersatz */
+define('SCG_AR_TS_LOCK', '/var/run/scg_ts_select.lock');
+define('SCG_AR_TS_CAND_AGE', 7 * 86400);   /* Liste woechentlich neu laden */
+define('SCG_AR_TS_SEL_AGE', 86400);        /* Auswahl taeglich neu testen */
+define('SCG_AR_TS_COUNT', 4);              /* so viele Reflektoren gleichzeitig */
+define('SCG_AR_TS_PROBE', 100);            /* so viele Kandidaten je Auswahl testen */
+define('SCG_AR_TS_DAY', 86400000);         /* ms je Tag: Timestamps laufen um Mitternacht UTC ueber */
 
 /* ------------------------------------------------------------------ */
 /* Einstellungen                                                       */
@@ -49,6 +61,9 @@ function scg_ar_defaults() {
 		'wanif' => '',          /* Durchsatz messen an: '' = automatisch (erstes WAN), 'limiter' = Limiter-Zaehler, sonst Interface */
 		'learnbase' => true,    /* Basis lernen: Leerlauf-Ziel und Startwert = zuletzt stabil laufende Rate */
 		'monitor' => true,      /* Latenz auch messen, wenn Autorate aus ist (fuer Limiter Live) */
+		'pingmode' => 'echo',   /* 'echo' = RTT, 'ts' = ICMP-Timestamp: Verzoegerung je Richtung */
+		'ts_country' => '',     /* Land der Reflektoren (ISO, 2 Buchstaben), '' = automatisch */
+		'ts_manual' => '',      /* feste Reflektoren statt automatischer Auswahl */
 	);
 }
 
@@ -124,6 +139,17 @@ function scg_ar_validate($a, &$errors) {
 			$errors[] = scg_t('Ping target "%s" is not an IPv4 address.', $r);
 		}
 	}
+	if (!in_array($a['pingmode'] ?? 'echo', array('echo', 'ts'), true)) {
+		$errors[] = scg_t('Unknown ping type.');
+	}
+	if (($a['ts_country'] ?? '') !== '' && !preg_match('/^[A-Za-z]{2}$/', $a['ts_country'])) {
+		$errors[] = scg_t('Country must be a two-letter code (e.g. NL) or empty.');
+	}
+	foreach (scg_ar_iplist($a['ts_manual'] ?? '') as $r) {
+		if (!filter_var($r, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+			$errors[] = scg_t('Reflector "%s" is not an IPv4 address.', $r);
+		}
+	}
 	$num = array('interval' => array(50, 2000), 'threshold' => array(5, 500), 'decfactor' => array(0.5, 0.99),
 		'incstep' => array(0.2, 20), 'tick' => array(200, 2000));
 	foreach ($num as $k => $r) {
@@ -131,6 +157,17 @@ function scg_ar_validate($a, &$errors) {
 			$errors[] = scg_t('Value "%s" must be between %s and %s.', $k, $r[0], $r[1]);
 		}
 	}
+}
+
+/* Liste von IP-Adressen aus einem Eingabefeld */
+function scg_ar_iplist($str) {
+	$out = array();
+	foreach (preg_split('/[\s,;]+/', trim((string)$str)) as $ip) {
+		if ($ip !== '') {
+			$out[] = $ip;
+		}
+	}
+	return array_values(array_unique($out));
 }
 
 /* Anzeigetexte der Autorate-Zustaende */
@@ -144,6 +181,7 @@ function scg_ar_state_texts() {
 		'bloat_min' => 'congestion, minimum reached',
 		'bloat_idle' => 'congestion without own load',
 		'bloat_lowload' => 'congestion, direction hardly loaded',
+		'bloat_other' => 'congestion in the other direction',
 		'increase' => 'increasing',
 		'max' => 'maximum',
 		'hold' => 'holding',
@@ -314,6 +352,27 @@ function scg_ar_status() {
  * eigene ICMP-ID: pf ordnet ICMP-States nach ID zu, mit gleicher ID wuerden
  * die markierten Pings im State der unmarkierten landen (ohne Queue).
  */
+/* Jetzt in ms seit Mitternacht UTC (mit Nachkommastellen) */
+function scg_ts_now() {
+	return fmod(microtime(true) * 1000, SCG_AR_TS_DAY);
+}
+
+/* Differenz a - b zweier Tageszeiten in ms, Ueberlauf um Mitternacht beruecksichtigt */
+function scg_ts_diff($a, $b) {
+	$d = fmod($a - $b, SCG_AR_TS_DAY);
+	if ($d > SCG_AR_TS_DAY / 2) {
+		$d -= SCG_AR_TS_DAY;
+	} elseif ($d <= -SCG_AR_TS_DAY / 2) {
+		$d += SCG_AR_TS_DAY;
+	}
+	return $d;
+}
+
+/* Einweg-Zeiten aus array(t1, t2, t3, t4): array(hin, zurueck) inkl. unbekanntem Uhrenversatz */
+function scg_ts_owd($ts) {
+	return array(scg_ts_diff($ts[1], $ts[0]), scg_ts_diff($ts[3], $ts[2]));
+}
+
 class SCGPingerSocket {
 	public $ok = false;
 	public $err = '';
@@ -397,7 +456,27 @@ class SCGPingerSocket {
 		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
 	}
 
-	/* Wartet hoechstens $us Mikrosekunden; liefert array(array(ip, rtt_ms, Sendezeit ns, Kanal), ...) */
+	/*
+	 * ICMP-Timestamp-Anfrage (Typ 13, nur Kanal 0). Die Antwort (Typ 14) traegt
+	 * die Empfangs- und Sendezeit des Reflektors: daraus Verzoegerung je Richtung.
+	 */
+	function sendTs($ip) {
+		$this->setTos(0);
+		$id = $this->icmpId(0);
+		$this->seq = ($this->seq + 1) & 0xffff;
+		$t1 = scg_ts_now();
+		$body = pack('NNN', ((int)floor($t1)) % SCG_AR_TS_DAY, 0, 0);
+		$hdr = pack('CCnnn', 13, 0, 0, $id, $this->seq);
+		$pkt = pack('CCnnn', 13, 0, self::cksum($hdr . $body), $id, $this->seq) . $body;
+		$this->pending[$id . '|' . $ip . '|' . $this->seq] = array(hrtime(true), 0, $ip, $t1);
+		@socket_sendto($this->sock, $pkt, strlen($pkt), 0, $ip, 0);
+	}
+
+	/*
+	 * Wartet hoechstens $us Mikrosekunden; liefert array(array(ip, rtt_ms, Sendezeit ns, Kanal, ts), ...).
+	 * ts = array(t1, t2, t3, t4) in ms seit Mitternacht UTC bei Timestamp-Antworten, sonst null;
+	 * null auch, wenn der Reflektor keine Standardzeit liefert (hoechstes Bit gesetzt).
+	 */
 	function receive($us) {
 		$out = array();
 		$r = array($this->sock);
@@ -420,14 +499,21 @@ class SCGPingerSocket {
 				continue;
 			}
 			$h = unpack('Ctype/Ccode/ncks/nid/nseq', substr($buf, $ihl, 8));
-			if ($h['type'] != 0) {
+			if ($h['type'] != 0 && $h['type'] != 14) {
 				continue;
 			}
 			$k = $h['id'] . '|' . $from . '|' . $h['seq'];
 			if (isset($this->pending[$k])) {
-				/* ip, rtt_ms, Sendezeitpunkt (ns), Kanal */
+				/* ip, rtt_ms, Sendezeitpunkt (ns), Kanal, Timestamps */
 				$p = $this->pending[$k];
-				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1]);
+				$ts = null;
+				if ($h['type'] == 14 && isset($p[3]) && strlen($buf) >= $ihl + 20) {
+					$t = unpack('Norig/Nrecv/Nxmit', substr($buf, $ihl + 8, 12));
+					if ($t['recv'] < SCG_AR_TS_DAY && $t['xmit'] < SCG_AR_TS_DAY) {
+						$ts = array($p[3], (float)$t['recv'], (float)$t['xmit'], $p[3] + ($now - $p[0]) / 1e6);
+					}
+				}
+				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1], $ts);
 				unset($this->pending[$k]);
 			}
 		}
@@ -499,6 +585,10 @@ class SCGPingerProc {
 		/* ping sendet selbststaendig */
 	}
 
+	function sendTs($ip) {
+		/* ohne Raw-Socket keine Timestamps; der Dienst nutzt dann Echo */
+	}
+
 	function receive($us) {
 		$out = array();
 		$r = array();
@@ -560,6 +650,19 @@ class SCGAutorate {
 	public $lowLoadShare = 0.02;  /* Mindestlast (Anteil am Limit), damit eine Richtung als genutzt gilt */
 	public $lowLoadKbit = 500;    /* und mindestens 0,5 Mbit/s Durchsatz */
 	public $resets = 0;
+	/*
+	 * ICMP-Timestamp: Reflektoren mit Rolle 'ctl' regeln, Echo-Ziele haben dann
+	 * die Rolle 'ref' (Ausweichziel und Referenz fuer die Latenz je Interface).
+	 * bloatDir = array('up' => bool, 'down' => bool), wenn der Stau einer
+	 * Richtung zugeordnet werden konnte, sonst null (dann gelten die Lastregeln).
+	 */
+	public $tsmode = false;
+	public $echoIps = array();
+	public $bloatDir = null;
+	public $refSamples = array();   /* Echo-Referenz im Timestamp-Betrieb: array(t, rtt) */
+	public $tsInfo = array();       /* Herkunft der Reflektoren fuer die Anzeige */
+	private $savedBase = array();
+	private $savedUp = array();
 	public $discarded = 0;        /* wegen Verarbeitungspause verworfene Proben */
 	public $source = array('kind' => 'limiter');   /* woher "erreicht" kommt */
 
@@ -610,17 +713,82 @@ class SCGAutorate {
 			}
 			unset($x);
 		}
-		foreach (preg_split('/[\s,]+/', trim($cfg['reflectors'])) as $ip) {
-			if ($ip !== '') {
-				/* Gemerkte Grundlatenz verhindert, dass ein Start waehrend Last den Stau als normal lernt */
-				$b = isset($baselines[$ip]) && is_numeric($baselines[$ip]) ? floatval($baselines[$ip]) : null;
-				$this->refl[$ip] = array('baseline' => $b, 'rtt' => null, 'delta' => null, 'last' => 0.0, 'lost' => 0);
-			}
+		$this->tsmode = (($cfg['pingmode'] ?? 'echo') === 'ts');
+		$this->savedBase = is_array($baselines) ? $baselines : array();
+		$this->savedUp = isset($saved['tsup']) && is_array($saved['tsup']) ? $saved['tsup'] : array();
+		$this->echoIps = scg_ar_iplist($cfg['reflectors']);
+		foreach ($this->echoIps as $ip) {
+			$this->refl[$ip] = $this->newRefl($ip, $this->tsmode ? 'ref' : 'ctl', false);
 		}
 	}
 
-	/* Neue RTT-Probe */
-	function onRtt($ip, $rtt, $now) {
+	private function newRefl($ip, $role, $ts) {
+		/* Gemerkte Grundlatenz verhindert, dass ein Start waehrend Last den Stau als normal lernt */
+		$b = isset($this->savedBase[$ip]) && is_numeric($this->savedBase[$ip]) ? floatval($this->savedBase[$ip]) : null;
+		$u = ($ts && isset($this->savedUp[$ip]) && is_numeric($this->savedUp[$ip])) ? floatval($this->savedUp[$ip]) : null;
+		return array('baseline' => $b, 'rtt' => null, 'delta' => null, 'last' => 0.0, 'lost' => 0,
+			'role' => $role, 'ts' => $ts, 'upbase' => $u, 'dup' => null, 'ddown' => null, 'tslast' => 0.0);
+	}
+
+	/*
+	 * Timestamp-Reflektoren setzen (Rolle 'ctl'). Bekannte behalten ihre
+	 * Grundlatenzen; Echo-Ziele bleiben als Rolle 'ref'.
+	 */
+	function setTsReflectors($ips) {
+		$new = array();
+		foreach ($ips as $ip) {
+			$old = $this->refl[$ip] ?? null;
+			if ($old && $old['role'] === 'ctl' && $old['ts']) {
+				$new[$ip] = $old;
+			} else {
+				$new[$ip] = $this->newRefl($ip, 'ctl', true);
+			}
+		}
+		foreach ($this->echoIps as $ip) {
+			if (!isset($new[$ip])) {
+				$new[$ip] = $this->refl[$ip] ?? $this->newRefl($ip, 'ref', false);
+				$new[$ip]['role'] = $this->tsmode ? 'ref' : 'ctl';
+			}
+		}
+		foreach ($this->refl as $ip => $r) {
+			if ($r['baseline'] !== null) {
+				$this->savedBase[$ip] = $r['baseline'];
+			}
+			if ($r['upbase'] !== null) {
+				$this->savedUp[$ip] = $r['upbase'];
+			}
+		}
+		$this->refl = $new;
+	}
+
+	/* Liefert mindestens ein Timestamp-Reflektor Antworten (letzte 5 s)? */
+	function tsActive($now) {
+		foreach ($this->refl as $r) {
+			if ($r['role'] === 'ctl' && $r['ts'] && $r['last'] >= $now - 5) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/* Reflektoren, die seit $secs keine Antwort mehr geschickt haben (nur Rolle ctl, Timestamp) */
+	function deadTs($now, $secs = 30) {
+		$out = array();
+		foreach ($this->refl as $ip => $r) {
+			if ($r['role'] === 'ctl' && $r['ts'] && $r['lost'] >= 10 && $r['last'] < $now - $secs) {
+				$out[] = $ip;
+			}
+		}
+		return $out;
+	}
+
+	/*
+	 * Neue RTT-Probe; $ts = array(t1, t2, t3, t4) bei einer Timestamp-Antwort.
+	 * Die Einweg-Zeiten enthalten einen unbekannten, festen Uhrenversatz. Er
+	 * faellt heraus, weil nur der Anstieg ueber die Grundwerte zaehlt:
+	 * Anstieg Upload = hin - Grundwert hin, Anstieg Download = RTT-Anstieg - Anstieg Upload.
+	 */
+	function onRtt($ip, $rtt, $now, $ts = null) {
 		if (!isset($this->refl[$ip])) {
 			return;
 		}
@@ -630,13 +798,23 @@ class SCGAutorate {
 			$r['baseline'] = $rtt;
 		}
 		$delta = $rtt - $r['baseline'];
+		/* Echo-Ziel im Timestamp-Betrieb: nur Referenz, solange Reflektoren antworten */
+		$ctl = ($r['role'] === 'ctl') || !$this->tsActive($now);
+		if ($r['role'] === 'ref') {
+			$this->refSamples[] = array($now, $rtt);
+			while ($this->refSamples && $this->refSamples[0][0] < $now - 10) {
+				array_shift($this->refSamples);
+			}
+		}
 		if ($this->paused) {
 			/* Speedtest: Latenz nur aufzeichnen, Grundlatenz und Stau-Fenster bleiben unberuehrt */
 			$r['rtt'] = $rtt;
 			$r['delta'] = $delta;
 			$r['last'] = $now;
 			$r['lost'] = 0;
-			$this->record($now, $rtt, $delta, false);
+			if ($ctl) {
+				$this->record($now, $rtt, $delta, false);
+			}
 			unset($r);
 			return;
 		}
@@ -659,8 +837,38 @@ class SCGAutorate {
 		$r['delta'] = $rtt - $r['baseline'];
 		$r['last'] = $now;
 		$r['lost'] = 0;
-		$this->record($now, $rtt, $r['delta'], false);
-		$this->window[] = ($r['delta'] > $thr);
+		if (!$ctl) {
+			unset($r);
+			return;
+		}
+		$dr = $r['delta'];
+		$du = $dd = null;
+		if ($ts !== null && $r['ts']) {
+			list($up) = scg_ts_owd($ts);
+			/* Erster Wert oder Uhrsprung des Reflektors (bei freier Leitung): neu aufsetzen */
+			if ($r['upbase'] === null || (abs($up - $r['upbase']) > 2000 && $dr < $thr / 2)) {
+				$r['upbase'] = $up;
+			}
+			$x = $up - $r['upbase'];
+			if ($dr < $thr / 2) {
+				/* Freie Leitung: Aenderungen der Aufteilung sind Uhrendrift, nachziehen */
+				$r['upbase'] += ($x < 0 ? 0.1 : 0.02) * $x;
+			}
+			$du = $up - $r['upbase'];
+			$dd = $dr - $du;
+			$r['dup'] = $du;
+			$r['ddown'] = $dd;
+			$r['tslast'] = $now;
+		}
+		$this->record($now, $rtt, $dr, false, $du, $dd);
+		/* Fenster: array(Stau, Upload betroffen, Download betroffen, Richtung bekannt) */
+		$bl = ($dr > $thr);
+		$e = array($bl, false, false, false);
+		if ($bl && $du !== null) {
+			$share = max(0.0, min($dr, $du)) / $dr;
+			$e = array(true, $share >= 0.25, $share <= 0.75, true);
+		}
+		$this->window[] = $e;
 		if (count($this->window) > $this->winsize) {
 			array_shift($this->window);
 		}
@@ -669,13 +877,19 @@ class SCGAutorate {
 
 	function onLost($ip, $now = null) {
 		if (isset($this->refl[$ip])) {
+			$now = $now ?? microtime(true);
 			$this->refl[$ip]['lost']++;
-			$this->record($now ?? microtime(true), null, null, true);
+			if ($this->refl[$ip]['role'] === 'ref') {
+				$this->refSamples[] = array($now, null);
+			}
+			if ($this->refl[$ip]['role'] === 'ctl' || !$this->tsActive($now)) {
+				$this->record($now, null, null, true);
+			}
 		}
 	}
 
 	/* Probe in den Sekundenverlauf eintragen */
-	function record($now, $rtt, $delta, $lost) {
+	function record($now, $rtt, $delta, $lost, $dup = null, $ddown = null) {
 		$sec = (int)floor($now);
 		if ($this->cur === null || $this->cur['t'] != $sec) {
 			$this->flushSecond();
@@ -691,7 +905,7 @@ class SCGAutorate {
 			$c['sum'] += $rtt;
 			$c['n']++;
 			unset($c);
-			$this->samples[] = array($now, $rtt, $delta);
+			$this->samples[] = array($now, $rtt, $delta, $dup, $ddown);
 		}
 		/* Rohproben der letzten 10 s behalten */
 		while ($this->samples && $this->samples[0][0] < $now - 10) {
@@ -705,8 +919,10 @@ class SCGAutorate {
 		}
 		$c = $this->cur;
 		$base = array();
+		$tsa = $this->tsActive((float)$c['t'] + 1);
 		foreach ($this->refl as $r) {
-			if ($r['baseline'] !== null) {
+			/* Grundlatenz der Ziele, die gerade den Verlauf bilden */
+			if ($r['baseline'] !== null && ($r['role'] === 'ctl') === ($tsa || !$this->tsmode)) {
 				$base[] = $r['baseline'];
 			}
 		}
@@ -873,7 +1089,8 @@ class SCGAutorate {
 			 * (nach einer Pause, z. B. Speedtest, enthielte sie sonst noch alte Werte) */
 			$from = $c['samples'] ? $c['samples'][0][0] : $now;
 			$ref = array();
-			foreach ($this->samples as $s) {
+			/* Im Timestamp-Betrieb pingen die Interface-Proben die Echo-Ziele: Referenz von dort */
+			foreach (($this->tsmode && $this->refSamples ? $this->refSamples : $this->samples) as $s) {
 				if ($s[0] >= $from) {
 					$ref[] = $s;
 				}
@@ -887,7 +1104,18 @@ class SCGAutorate {
 
 	/* Kennzahlen der letzten 10 s: Mittel, 95-%-Wert, Jitter, Verlust */
 	function stats() {
-		return self::sampleStats($this->samples);
+		$st = self::sampleStats($this->samples);
+		/* Mittlerer Anstieg je Richtung (nur Timestamp-Proben) */
+		$u = $d = array();
+		foreach ($this->samples as $s) {
+			if (isset($s[3]) && $s[3] !== null) {
+				$u[] = $s[3];
+				$d[] = $s[4];
+			}
+		}
+		$st['up'] = $u ? round(array_sum($u) / count($u), 1) : null;
+		$st['down'] = $d ? round(array_sum($d) / count($d), 1) : null;
+		return $st;
 	}
 
 	/* $samples = array(array(t, rtt oder null bei Verlust, ...), ...) */
@@ -926,11 +1154,17 @@ class SCGAutorate {
 				$b[$ip] = round($r['baseline'], 2);
 			}
 		}
+		$u = array();
+		foreach ($this->refl as $ip => $r) {
+			if ($r['upbase'] !== null) {
+				$u[$ip] = round($r['upbase'], 2);
+			}
+		}
 		$l = array();
 		foreach ($this->dirs as $d => $x) {
 			$l[$d] = array('pipe' => $x['pipe'], 'kbit' => round($x['learned']));
 		}
-		return array('refl' => $b, 'learned' => $l);
+		return array('refl' => $b, 'tsup' => $u, 'learned' => $l);
 	}
 
 	/* Ziel im Leerlauf: gelernte oder feste Basis */
@@ -966,11 +1200,22 @@ class SCGAutorate {
 			$this->bloatSince = null;
 			$this->idleBloatSince = null;
 		}
-		$n = 0;
-		foreach ($this->window as $b) {
-			$n += $b ? 1 : 0;
+		$n = $nd = $nu = $ndn = 0;
+		foreach ($this->window as $e) {
+			if (!$e[0]) {
+				continue;
+			}
+			$n++;
+			if ($e[3]) {
+				$nd++;
+				$nu += $e[1] ? 1 : 0;
+				$ndn += $e[2] ? 1 : 0;
+			}
 		}
 		$this->bloat = ($n >= $this->winbloat);
+		/* Richtung: genug Stau-Proben mit Timestamps, Mehrheit entscheidet */
+		$this->bloatDir = ($this->bloat && $nd >= $this->winbloat)
+			? array('up' => 2 * $nu >= $nd, 'down' => 2 * $ndn >= $nd) : null;
 		if ($this->bloat) {
 			if ($this->bloatSince === null) {
 				$this->bloatSince = $now;
@@ -1064,7 +1309,16 @@ class SCGAutorate {
 			$x = &$this->dirs[$d];
 			$load = $x['load'];
 			$new = $x['shaper'];
-			$cut = $this->bloat && ($load >= 0.5 || ($lowLoadCut && $d === $pick));
+			if ($this->bloatDir !== null) {
+				/*
+				 * Richtung bekannt: nur die gestaute Richtung senken. Bei geringer
+				 * Last wie bisher erst nach lowLoadDelay und nur, wenn sie genutzt wird.
+				 */
+				$used = ($load >= $this->lowLoadShare && $x['achieved'] >= $this->lowLoadKbit);
+				$cut = !empty($this->bloatDir[$d]) && ($load >= 0.5 || ($used && ($now - $this->bloatSince) >= $this->lowLoadDelay));
+			} else {
+				$cut = $this->bloat && ($load >= 0.5 || ($lowLoadCut && $d === $pick));
+			}
 			if ($cut) {
 				if ($now - $x['lastDec'] >= $this->decRefractory) {
 					$new = max($x['min'], min($x['shaper'], $x['achieved']) * $dec);
@@ -1079,7 +1333,11 @@ class SCGAutorate {
 					$x['state'] = 'bloat_min';
 				}
 			} elseif ($this->bloat) {
-				$x['state'] = ($this->idle) ? 'bloat_idle' : 'bloat_lowload';
+				if ($this->bloatDir !== null && empty($this->bloatDir[$d])) {
+					$x['state'] = 'bloat_other';
+				} else {
+					$x['state'] = ($this->idle) ? 'bloat_idle' : 'bloat_lowload';
+				}
 			} elseif ($load >= 0.75) {
 				if ($now - $x['lastDec'] >= $this->incHold) {
 					$new = min($x['max'], $x['shaper'] * (1 + $inc));
@@ -1130,22 +1388,317 @@ class SCGAutorate {
 				'state' => $x['state']);
 		}
 		$refl = array();
+		$now = microtime(true);
 		foreach ($this->refl as $ip => $r) {
+			/* Richtungswerte nur, solange der Reflektor mit Timestamps antwortet */
+			$fresh = $r['tslast'] > 0 && $r['tslast'] >= $r['last'] - 5;
 			$refl[$ip] = array('rtt' => $r['rtt'] === null ? null : round($r['rtt'], 1),
 				'baseline' => $r['baseline'] === null ? null : round($r['baseline'], 1),
-				'delta' => $r['delta'] === null ? null : round($r['delta'], 1), 'lost' => $r['lost']);
+				'delta' => $r['delta'] === null ? null : round($r['delta'], 1), 'lost' => $r['lost'],
+				'role' => $r['role'], 'ts' => $r['ts'],
+				'up' => ($fresh && $r['dup'] !== null) ? round($r['dup'], 1) : null,
+				'down' => ($fresh && $r['ddown'] !== null) ? round($r['ddown'], 1) : null);
 		}
 		$n = 0;
-		foreach ($this->window as $b) {
-			$n += $b ? 1 : 0;
+		foreach ($this->window as $e) {
+			$n += $e[0] ? 1 : 0;
 		}
 		return array('t' => microtime(true), 'dirs' => $dirs, 'refl' => $refl, 'bloat' => $this->bloat,
 			'window' => "{$n}/" . count($this->window), 'threshold' => floatval($this->cfg['threshold']),
 			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'discarded' => $this->discarded,
 			'source' => $this->source, 'pid' => getmypid(), 'control' => $this->control, 'paused' => $this->paused,
 			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats(),
-			'iflat' => $iflat, 'iflat_class' => $iflat ? $iflat[0]['class'] : '');
+			'iflat' => $iflat, 'iflat_class' => $iflat ? $iflat[0]['class'] : '',
+			'pingmode' => $this->tsmode ? 'ts' : 'echo', 'tsactive' => $this->tsActive($now),
+			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo);
 	}
+}
+
+/* ------------------------------------------------------------------ */
+/* ICMP-Timestamp-Reflektoren: Liste laden, testen, auswaehlen          */
+/* ------------------------------------------------------------------ */
+
+/* Land des WAN-Anschlusses aus dem Cloudflare-Trace (loc=XX), '' wenn unbekannt */
+function scg_ts_trace_country() {
+	$o = array();
+	exec(escapeshellarg(SCG_AR_CURL) . ' -s -m 10 ' . escapeshellarg(SCG_AR_TS_TRACE) . ' 2>/dev/null', $o);
+	foreach ($o as $l) {
+		if (preg_match('/^loc=([A-Z]{2})\s*$/', $l, $m)) {
+			return $m[1];
+		}
+	}
+	return '';
+}
+
+/* Oeffentliche IPv4-Adresse? */
+function scg_ts_public_ip($ip) {
+	return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+}
+
+/*
+ * Liest die CSV-Liste aus $fh und behaelt eine Zufallsauswahl: bevorzugt das
+ * Land $country; gibt es dort zu wenige, kommt dieselbe Teilregion dazu,
+ * notfalls die ganze Welt. Liefert array('src' => country|subregion|world,
+ * 'total' => Zeilen gelesen, 'rows' => array(array(ip, offset, beschreibung, ort), ...)).
+ */
+function scg_ts_filter_csv($fh, $country, $keep = 3000) {
+	$country = strtoupper((string)$country);
+	$col = array('reflector_ip' => 0, 'ip_version' => 1, 'offset' => 2, 'description' => 3, 'country_code' => 4,
+		'sub_region' => 6, 'city' => 10);
+	$hdr = fgetcsv($fh, 0, ',', '"', '');
+	if (is_array($hdr)) {
+		foreach ($hdr as $i => $name) {
+			$name = trim((string)$name);
+			if (isset($col[$name])) {
+				$col[$name] = $i;
+			}
+		}
+	}
+	$own = array();
+	$sub = array();      /* Teilregion => Zufallsauswahl */
+	$seenSub = array();
+	$world = array();
+	$nOwn = $nWorld = $total = 0;
+	$mySub = null;
+	$res = function (&$list, &$n, $row, $k) {
+		$n++;
+		if (count($list) < $k) {
+			$list[] = $row;
+		} else {
+			$j = mt_rand(0, $n - 1);
+			if ($j < $k) {
+				$list[$j] = $row;
+			}
+		}
+	};
+	while (($r = fgetcsv($fh, 0, ',', '"', '')) !== false) {
+		if (!is_array($r) || count($r) < 5) {
+			continue;
+		}
+		$total++;
+		$ip = trim((string)($r[$col['reflector_ip']] ?? ''));
+		if (($r[$col['ip_version']] ?? '4') !== '4' || !scg_ts_public_ip($ip)) {
+			continue;
+		}
+		$row = array($ip, is_numeric($r[$col['offset']] ?? '') ? (int)$r[$col['offset']] : 0,
+			substr((string)($r[$col['description']] ?? ''), 0, 60), substr((string)($r[$col['city']] ?? ''), 0, 40));
+		$cc = strtoupper(trim((string)($r[$col['country_code']] ?? '')));
+		$sr = (string)($r[$col['sub_region']] ?? '');
+		$res($world, $nWorld, $row, $keep);
+		if (!isset($sub[$sr])) {
+			$sub[$sr] = array();
+			$seenSub[$sr] = 0;
+		}
+		$res($sub[$sr], $seenSub[$sr], $row, 500);
+		if ($country !== '' && $cc === $country) {
+			$mySub = $sr;
+			$res($own, $nOwn, $row, $keep);
+		}
+	}
+	if (count($own) >= 50) {
+		return array('src' => 'country', 'total' => $total, 'rows' => $own);
+	}
+	if ($mySub !== null && count($sub[$mySub]) >= 50) {
+		$ips = array();
+		foreach ($own as $row) {
+			$ips[$row[0]] = true;
+		}
+		foreach ($sub[$mySub] as $row) {
+			if (!isset($ips[$row[0]])) {
+				$own[] = $row;
+			}
+		}
+		return array('src' => 'subregion', 'total' => $total, 'rows' => $own);
+	}
+	return array('src' => 'world', 'total' => $total, 'rows' => $world);
+}
+
+/* Kandidaten fuer $country: aus dem Zwischenspeicher oder frisch geladen (woechentlich) */
+function scg_ts_candidates($country, $force = false) {
+	$old = json_decode((string)@file_get_contents(SCG_AR_TS_CAND), true);
+	$fresh = is_array($old) && ($old['country'] ?? null) === $country && !empty($old['rows']) &&
+		($old['t'] ?? 0) > time() - SCG_AR_TS_CAND_AGE;
+	if ($fresh && !$force) {
+		return $old;
+	}
+	$cmd = escapeshellarg(SCG_AR_CURL) . ' -s -f -L -m 300 --max-filesize 100000000 ' . escapeshellarg(SCG_AR_TS_URL) . ' 2>/dev/null';
+	$fh = @popen($cmd, 'r');
+	$data = null;
+	if ($fh) {
+		$f = scg_ts_filter_csv($fh, $country);
+		pclose($fh);
+		if (!empty($f['rows'])) {
+			$data = array('t' => time(), 'country' => $country, 'src' => $f['src'], 'total' => $f['total'], 'rows' => $f['rows']);
+			@file_put_contents(SCG_AR_TS_CAND . '.tmp', json_encode($data));
+			@rename(SCG_AR_TS_CAND . '.tmp', SCG_AR_TS_CAND);
+		}
+	}
+	/* Download gescheitert: alte Liste weiter verwenden */
+	return $data ?? (is_array($old) && !empty($old['rows']) ? $old : null);
+}
+
+/*
+ * Bewertung der Testantworten: $res = ip => array('rtt' => array(ms, ...), 'valid' => n gueltige
+ * Timestamps, 'up' => array(Hinweg inkl. Uhrenversatz, ...)).
+ * Gut ist, wer mindestens 2 Antworten mit gueltiger Zeit lieferte und dessen
+ * Uhr dabei gleichmaessig lief (Hinweg schwankt nicht staerker als die RTT).
+ * Rang nach Median-RTT plus Schwankung. Bevorzugt verschiedene /16-Netze.
+ * Liefert array('chosen' => array(ip, ...), 'spare' => array(ip, ...), 'score' => ip => ms).
+ */
+function scg_ts_rank($res, $count = SCG_AR_TS_COUNT, $spares = 16) {
+	$score = array();
+	foreach ($res as $ip => $r) {
+		$rt = $r['rtt'] ?? array();
+		if (count($rt) < 2 || ($r['valid'] ?? 0) < 2) {
+			continue;
+		}
+		$up = $r['up'] ?? array();
+		if (count($up) >= 2 && (max($up) - min($up)) > (max($rt) - min($rt)) + 5) {
+			continue;
+		}
+		sort($rt);
+		$med = $rt[intdiv(count($rt), 2)];
+		$score[$ip] = round($med + ($rt[count($rt) - 1] - $rt[0]), 2);
+	}
+	asort($score);
+	$chosen = array();
+	$net = array();
+	foreach (array_keys($score) as $ip) {
+		$n16 = implode('.', array_slice(explode('.', $ip), 0, 2));
+		if (count($chosen) < $count && !isset($net[$n16])) {
+			$chosen[] = $ip;
+			$net[$n16] = true;
+		}
+	}
+	foreach (array_keys($score) as $ip) {
+		if (count($chosen) < $count && !in_array($ip, $chosen, true)) {
+			$chosen[] = $ip;
+		}
+	}
+	$spare = array();
+	foreach (array_keys($score) as $ip) {
+		if (count($spare) < $spares && !in_array($ip, $chosen, true)) {
+			$spare[] = $ip;
+		}
+	}
+	return array('chosen' => $chosen, 'spare' => $spare, 'score' => $score);
+}
+
+/* Timestamp-Antwort brauchbar? Standardzeit (geprueft im Pinger) und Sendezeit nicht vor Empfangszeit */
+function scg_ts_valid($ts) {
+	if ($ts === null) {
+		return false;
+	}
+	$hold = scg_ts_diff($ts[2], $ts[1]);
+	return $hold >= 0 && $hold <= 1000;
+}
+
+function scg_ts_select_running() {
+	$pid = intval(@file_get_contents(SCG_AR_TS_LOCK));
+	if ($pid <= 0) {
+		return false;
+	}
+	exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $o, $rc);
+	return $rc == 0;
+}
+
+/* Auswahl im Hintergrund starten (Dienst, Einstellungsseite) */
+function scg_ts_spawn_select() {
+	if (scg_ts_select_running()) {
+		return;
+	}
+	exec('/usr/local/bin/php -f /usr/local/pkg/shaperclassgen_autorate.php select > /dev/null 2>&1 &');
+}
+
+/*
+ * Reflektoren auswaehlen: Land bestimmen, Liste laden, SCG_AR_TS_PROBE
+ * zufaellige Kandidaten dreimal anfragen, die besten behalten.
+ * Ergebnis in SCG_AR_TS_SEL; liefert es auch zurueck.
+ */
+function scg_ts_select($force_list = false) {
+	if (scg_ts_select_running()) {
+		return null;
+	}
+	@file_put_contents(SCG_AR_TS_LOCK, (string)getmypid());
+	$cfg = scg_ar_settings();
+	$out = array('t' => time(), 'country' => '', 'src' => '', 'tested' => 0, 'answered' => 0,
+		'chosen' => array(), 'spare' => array(), 'err' => '');
+	$country = strtoupper(trim((string)$cfg['ts_country']));
+	if ($country === '') {
+		$country = scg_ts_trace_country();
+		$out['country_auto'] = true;
+	}
+	$out['country'] = $country;
+	$cand = scg_ts_candidates($country, $force_list);
+	$pinger = new SCGPingerSocket();
+	if (!$cand) {
+		$out['err'] = 'list download failed';
+	} elseif (!$pinger->ok) {
+		$out['err'] = $pinger->err;
+	} else {
+		$out['src'] = $cand['src'];
+		$rows = $cand['rows'];
+		shuffle($rows);
+		$rows = array_slice($rows, 0, SCG_AR_TS_PROBE);
+		$info = array();
+		$res = array();
+		foreach ($rows as $row) {
+			$info[$row[0]] = $row;
+			$res[$row[0]] = array('rtt' => array(), 'valid' => 0, 'up' => array());
+		}
+		$collect = function ($us) use ($pinger, &$res, $info) {
+			foreach ($pinger->receive($us) as $a) {
+				if (!isset($res[$a[0]])) {
+					continue;
+				}
+				$res[$a[0]]['rtt'][] = $a[1];
+				if (scg_ts_valid($a[4] ?? null)) {
+					$res[$a[0]]['valid']++;
+					$res[$a[0]]['up'][] = scg_ts_owd($a[4])[0];
+				}
+			}
+		};
+		for ($round = 0; $round < 3; $round++) {
+			foreach (array_keys($res) as $ip) {
+				$pinger->sendTs($ip);
+				$collect(10000);
+			}
+		}
+		$end = microtime(true) + 1.5;
+		while (microtime(true) < $end) {
+			$collect(100000);
+		}
+		$out['tested'] = count($res);
+		foreach ($res as $r) {
+			$out['answered'] += $r['valid'] > 0 ? 1 : 0;
+		}
+		$rk = scg_ts_rank($res);
+		$desc = function ($ip) use ($info, $rk) {
+			return array('ip' => $ip, 'rtt' => $rk['score'][$ip] ?? null, 'descr' => $info[$ip][2] ?? '', 'city' => $info[$ip][3] ?? '');
+		};
+		$out['chosen'] = array_map($desc, $rk['chosen']);
+		$out['spare'] = array_map($desc, $rk['spare']);
+		if (!$out['chosen']) {
+			$out['err'] = 'no reflector answered';
+		}
+	}
+	/* Keine brauchbare Auswahl: alte behalten, nur Zeit und Fehler vermerken */
+	$old = json_decode((string)@file_get_contents(SCG_AR_TS_SEL), true);
+	if (!$out['chosen'] && is_array($old) && !empty($old['chosen'])) {
+		$old['err'] = $out['err'];
+		$old['t'] = $out['t'];
+		$out = $old;
+	}
+	@file_put_contents(SCG_AR_TS_SEL . '.tmp', json_encode($out));
+	@rename(SCG_AR_TS_SEL . '.tmp', SCG_AR_TS_SEL);
+	@unlink(SCG_AR_TS_LOCK);
+	return $out;
+}
+
+/* Letzte Auswahl (fuer Dienst und Einstellungsseite) */
+function scg_ts_selection() {
+	$j = json_decode((string)@file_get_contents(SCG_AR_TS_SEL), true);
+	return is_array($j) ? $j : null;
 }
 
 /* Langzeitverlauf auf SCG_AR_LONG_HOURS kuerzen */
@@ -1267,6 +1820,8 @@ function scg_ar_run() {
 	}
 	$ar = new SCGAutorate($cfg, $saved);
 	$ips = array_keys($ar->refl);
+	/* Echo-Ziele: Latenz je Interface pingt immer diese (Probe-Regeln passen auf Echo) */
+	$echo_ips = $ar->echoIps;
 	$wan = null;
 	$next_baseline = microtime(true) + 60;
 	$pinger = new SCGPingerSocket();
@@ -1276,8 +1831,33 @@ function scg_ar_run() {
 		$pinger->err = $err;
 	}
 	syslog(LOG_NOTICE, "ShaperClassGen Autorate gestartet (Pinger: {$pinger->mode})");
+	/* ICMP-Timestamp: braucht den Raw-Socket; feste Liste oder automatische Auswahl */
+	$ts_on = $ar->tsmode && $pinger->mode === 'socket';
+	$ts_manual = scg_ar_iplist($cfg['ts_manual'] ?? '');
+	$ts_used = array();
+	$ts_spare = array();
+	$ts_sel_mtime = null;
+	$ts_next_spawn = 0;
+	if ($ar->tsmode && !$ts_on) {
+		$ar->tsInfo = array('src' => 'none', 'err' => 'ICMP timestamps need the PHP sockets extension');
+	}
 
 	$interval = intval($cfg['interval']) / 1000;
+	/* Ziele neu setzen: neue bekommen einen Ping-Termin, entfernte keinen mehr */
+	$set_ts = function ($list) use ($ar, &$next_ping, &$interval) {
+		$ar->setTsReflectors($list);
+		$i = 0;
+		foreach (array_keys($ar->refl) as $ip) {
+			if (!isset($next_ping[$ip])) {
+				$next_ping[$ip] = microtime(true) + $interval * $i++ / max(1, count($ar->refl));
+			}
+		}
+		foreach (array_keys($next_ping) as $ip) {
+			if (!isset($ar->refl[$ip])) {
+				unset($next_ping[$ip]);
+			}
+		}
+	};
 	$tick = intval($cfg['tick']) / 1000;
 	$next_ping = array();
 	$i = 0;
@@ -1342,10 +1922,56 @@ function scg_ar_run() {
 					$tos[$ch] = $c['tos'];
 					$ch++;
 				}
-				$pinger->channels($tos, $ips, SCG_AR_LAT_MS);
+				$pinger->channels($tos, $echo_ips, SCG_AR_LAT_MS);
 				$ar->setLatChannels($cl);
 				$latsig = $sig;
 				$next_rotate = $now + SCG_AR_LAT_ROTATE;
+			}
+			/* Timestamp-Reflektoren: Auswahl uebernehmen, ausgefallene ersetzen, neu auswaehlen */
+			if ($ts_on && $ts_manual) {
+				if (!$ts_used) {
+					$ts_used = $ts_manual;
+					$set_ts($ts_used);
+					$ar->tsInfo = array('src' => 'manual');
+				}
+			} elseif ($ts_on) {
+				clearstatcache(true, SCG_AR_TS_SEL);
+				$smt = @filemtime(SCG_AR_TS_SEL);
+				if ($smt !== false && $smt !== $ts_sel_mtime) {
+					$ts_sel_mtime = $smt;
+					$sel = scg_ts_selection();
+					if ($sel && !empty($sel['chosen'])) {
+						$ts_used = array_column($sel['chosen'], 'ip');
+						$ts_spare = array_column($sel['spare'] ?? array(), 'ip');
+						$set_ts($ts_used);
+					}
+					$ar->tsInfo = array('src' => 'auto', 'country' => $sel['country'] ?? '', 'list' => $sel['src'] ?? '',
+						't' => $sel['t'] ?? null, 'err' => $sel['err'] ?? '');
+				}
+				$dead = $ar->deadTs($now);
+				if ($dead) {
+					foreach ($dead as $ip) {
+						$rep = null;
+						while ($ts_spare && ($rep === null || in_array($rep, $ts_used, true))) {
+							$rep = array_shift($ts_spare);
+						}
+						$k = array_search($ip, $ts_used, true);
+						if ($k !== false) {
+							if ($rep !== null && !in_array($rep, $ts_used, true)) {
+								$ts_used[$k] = $rep;
+							} else {
+								unset($ts_used[$k]);
+							}
+						}
+					}
+					$ts_used = array_values($ts_used);
+					$set_ts($ts_used);
+				}
+				$need = ($smt === false || $smt < time() - SCG_AR_TS_SEL_AGE || count($ts_used) < 2);
+				if ($need && $now >= $ts_next_spawn) {
+					scg_ts_spawn_select();
+					$ts_next_spawn = $now + 600;
+				}
 			}
 			$next_resolve = $now + 30;
 		}
@@ -1362,7 +1988,11 @@ function scg_ar_run() {
 		}
 		foreach ($next_ping as $ip => $t) {
 			if ($now >= $t) {
-				$pinger->send($ip);
+				if ($ts_on && !empty($ar->refl[$ip]['ts'])) {
+					$pinger->sendTs($ip);
+				} else {
+					$pinger->send($ip);
+				}
 				$next_ping[$ip] = max($t + $interval, $now);
 			}
 		}
@@ -1371,7 +2001,7 @@ function scg_ar_run() {
 		if (!$ar->paused) {
 			foreach ($latch as $ch => &$c) {
 				if ($now >= $c['next']) {
-					$pinger->send($ips[$c['i']++ % count($ips)], $ch, $c['tos']);
+					$pinger->send($echo_ips[$c['i']++ % count($echo_ips)], $ch, $c['tos']);
 					$c['next'] = max($c['next'] + $lat_iv, $now);
 				}
 				$lat_wake = min($lat_wake, $c['next']);
@@ -1387,7 +2017,7 @@ function scg_ar_run() {
 			}
 			$ch = $res[3] ?? 0;
 			if ($ch == 0) {
-				$ar->onRtt($res[0], $res[1], microtime(true));
+				$ar->onRtt($res[0], $res[1], microtime(true), $res[4] ?? null);
 			} elseif (isset($latch[$ch])) {
 				$ar->onLatRtt($latch[$ch]['tag'], $res[1], microtime(true));
 			}

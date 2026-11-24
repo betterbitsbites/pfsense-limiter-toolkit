@@ -628,18 +628,29 @@ events.push(function() {
 		var baseAvg = hs.length && hs[hs.length - 1][6] !== null ? hs[hs.length - 1][6] : null;
 		var hotAvg = baseAvg !== null && s.avg !== null && s.avg > baseAvg + a.threshold;
 		var refl = '';
+		/* ICMP timestamp: echo targets are only reference/fallback while reflectors answer */
+		var tsUse = a.pingmode === 'ts' && a.tsactive;
+		function owd(v) { return v === null || v === undefined ? '–' : (v >= 0 ? '+' : '') + v; }
 		$.each(a.refl || {}, function(ip, r) {
 			var hot = r.delta !== null && r.delta > a.threshold;
-			refl += '<span class="scg-kpi"><small' + (hot ? ' class="scg-hot"' : '') + '>' + esc(ip) + ': ' + (r.rtt === null ? '–' : r.rtt + ' ms') +
-				' (' + t('Base') + ' ' + (r.baseline === null ? '–' : r.baseline) + ')' + (r.lost ? ' &middot; ' + t('%s lost', r.lost) : '') + '</small></span>';
+			var ref = tsUse && r.role === 'ref';
+			refl += '<span class="scg-kpi"><small' + (hot && !ref ? ' class="scg-hot"' : (ref ? ' class="text-muted"' : '')) + '>' + esc(ip) + ': ' + (r.rtt === null ? '–' : r.rtt + ' ms') +
+				' (' + t('Base') + ' ' + (r.baseline === null ? '–' : r.baseline) + ')' +
+				(r.up !== null && r.up !== undefined ? ' &uarr;' + owd(r.up) + ' &darr;' + owd(r.down) : '') +
+				(ref ? ' &middot; ' + t('reference') : '') + (r.lost ? ' &middot; ' + t('%s lost', r.lost) : '') + '</small></span>';
 		});
+		var bd = a.bloatdir;
+		var dirTxt = bd ? (bd.up && bd.down ? t('both directions') : (bd.up ? 'Upload' : 'Download')) : '';
 		var title = t('Latency') + ' ' + (a.paused ? '<span class="label label-info">' + t('Speed test running &ndash; Autorate paused') + '</span>' :
-			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
-			' <small>Pinger ' + esc(a.mode) + ' &middot; ' + t('Threshold') + ' +' + a.threshold + ' ms' + (a.control ? '' : ' &middot; ' + t('measuring only, Autorate control is off')) + '</small>';
+			(a.bloat ? '<span class="label label-danger">' + t('Congestion detected') + (dirTxt ? ': ' + dirTxt : '') + '</span>' : '<span class="label label-success">' + t('Line clear') + '</span>')) +
+			' <small>Pinger ' + esc(a.mode) + (a.pingmode === 'ts' ? ' &middot; ' + (tsUse ? t('ICMP timestamp') : t('ICMP timestamp: no reflector answers, echo in use')) : '') +
+			' &middot; ' + t('Threshold') + ' +' + a.threshold + ' ms' + (a.control ? '' : ' &middot; ' + t('measuring only, Autorate control is off')) + '</small>';
 		$('#scg_latency').html('<div class="panel panel-default" data-scg-sec="latency"><div class="panel-heading"><h2 class="panel-title">' + title + '</h2></div><div class="panel-body">' +
 			'<div>' + t('Last 10 s:') + ' ' + kpi(t('average'), s.avg, ' ms', hotAvg) + kpi('P95', s.p95, ' ms', baseAvg !== null && s.p95 > baseAvg + a.threshold) +
 			kpi('Min/Max', s.min === null ? null : s.min + ' / ' + s.max, ' ms') + kpi('Jitter', s.jitter, ' ms', s.jitter > a.threshold / 2) +
-			kpi(t('Loss'), s.loss, ' %', s.loss > 0) + '</div>' + svg +
+			kpi(t('Loss'), s.loss, ' %', s.loss > 0) +
+			(s.up !== null && s.up !== undefined ? kpi(t('Upload delay'), owd(s.up), ' ms', s.up > a.threshold / 2) + kpi(t('Download delay'), owd(s.down), ' ms', s.down > a.threshold / 2) : '') +
+			'</div>' + svg +
 			'<div class="scg-legend"><span><i style="background:rgba(255,92,92,.5);height:8px"></i>' + t('Min&ndash;max per second (wide = fluctuating)') + '</span>' +
 			'<span><i style="background:#ff5c5c"></i>' + t('average') + '</span><span><i style="background:#2f9e75"></i>' + t('Base latency') + '</span>' +
 			'<span><i style="background:#d89b2b"></i>' + t('Congestion threshold') + '</span><span><i style="background:#ff5c5c;height:8px;width:3px"></i>' + t('Loss') + '</span></div>' +

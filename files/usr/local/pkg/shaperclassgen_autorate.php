@@ -1,7 +1,7 @@
 <?php
 /*
  * shaperclassgen_autorate.php - Autorate-Dienst
- * Aufruf: php -f shaperclassgen_autorate.php [run|restore|enabled]
+ * Aufruf: php -f shaperclassgen_autorate.php [run|restore|enabled|select [list]]
  * Licensed under the Apache License, Version 2.0
  */
 /* Waehrend eines Paket-Updates fehlen die Bibliotheken kurz: dann still beenden */
@@ -21,6 +21,19 @@ switch ($cmd) {
 		$a = scg_ar_settings();
 		/* Dienst laeuft bei Regelung oder reiner Latenzmessung */
 		exit((empty($a['enable']) && empty($a['monitor'])) ? 1 : 0);
+	case 'select':
+		/* ICMP-Timestamp-Reflektoren auswaehlen ("select list" = Liste neu laden) */
+		$r = scg_ts_select(($argv[2] ?? '') === 'list');
+		if ($r === null) {
+			echo "selection already running\n";
+			exit(0);
+		}
+		echo "country " . ($r['country'] ?: '-') . " (" . ($r['src'] ?: '-') . "), tested {$r['tested']}, answered {$r['answered']}" .
+			($r['err'] ? ", error: {$r['err']}" : '') . "\n";
+		foreach ($r['chosen'] as $c) {
+			echo "  {$c['ip']}  {$c['rtt']} ms  {$c['descr']} {$c['city']}\n";
+		}
+		exit($r['chosen'] ? 0 : 1);
 	case 'restore':
 		scg_ar_restore();
 		@unlink(SCG_AR_STATUS);

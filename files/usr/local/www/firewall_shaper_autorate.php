@@ -43,6 +43,9 @@ if ($_POST) {
 	if ($act == 'restart') {
 		scg_ar_service('restart');
 		$msgs[] = scg_t('Service restarted.');
+	} elseif ($act == 'tsselect') {
+		scg_ts_spawn_select();
+		$msgs[] = scg_t('Reflector selection started. It takes about 10 s, the first time up to a minute (list download); then reload this page.');
 	} else {
 		$a['enable'] = !empty($_POST['enable']);
 		$a['learnbase'] = !empty($_POST['learnbase']);
@@ -53,6 +56,9 @@ if ($_POST) {
 			}
 		}
 		$a['reflectors'] = trim($_POST['reflectors'] ?? '');
+		$a['pingmode'] = ($_POST['pingmode'] ?? 'echo') === 'ts' ? 'ts' : 'echo';
+		$a['ts_country'] = strtoupper(trim($_POST['ts_country'] ?? ''));
+		$a['ts_manual'] = implode(' ', scg_ar_iplist($_POST['ts_manual'] ?? ''));
 		$a['wanif'] = trim($_POST['wanif'] ?? '');
 		foreach (array('interval', 'threshold', 'decfactor', 'incstep', 'tick') as $k) {
 			$a[$k] = trim(str_replace(',', '.', $_POST[$k] ?? ''));
@@ -83,6 +89,8 @@ if ($_POST) {
 
 $running = scg_ar_running();
 $status = scg_ar_status();
+$tssel = scg_ts_selection();
+$tsbusy = scg_ts_select_running();
 
 include("head.inc");
 
@@ -168,10 +176,52 @@ function dir_rows($d, $label, $a, $pipes) {
 	<div class="panel-heading"><h2 class="panel-title"><?=scg_t('Measurement and control')?></h2></div>
 	<div class="panel-body">
 		<div class="row">
+			<div class="col-sm-4 form-group">
+				<label><?=scg_t('Ping type')?></label>
+				<select class="form-control" name="pingmode" id="pingmode">
+					<option value="echo" <?=($a['pingmode'] ?? 'echo') !== 'ts' ? 'selected' : ''?>><?=scg_t('Echo (round-trip time)')?></option>
+					<option value="ts" <?=($a['pingmode'] ?? 'echo') === 'ts' ? 'selected' : ''?>><?=scg_t('ICMP timestamp (upload and download delay separately)')?></option>
+				</select>
+			</div>
+			<div class="col-sm-8 form-group">
+				<span class="help-block"><?=scg_t('<b>Echo</b> measures only the round trip: with congestion Autorate cannot tell which direction is full and lowers every direction that is at least half loaded. <b>ICMP timestamp</b> asks reflectors for their clock time when the request arrived and when the reply left. From that Autorate splits the delay into upload and download and lowers only the congested direction; e.g. a full upload no longer cuts the download.')?></span>
+			</div>
 			<div class="col-sm-12 form-group">
 				<label><?=scg_t('Ping targets (IPv4)')?></label>
 				<input class="form-control" type="text" name="reflectors" value="<?=h($a['reflectors'])?>">
-				<span class="help-block"><?=scg_t('Two or three reliable targets behind the provider. Congestion is detected when several of the latest samples are above the threshold; a single slow target triggers nothing.')?></span>
+				<span class="help-block"><?=scg_t('Two or three reliable targets behind the provider. Congestion is detected when several of the latest samples are above the threshold; a single slow target triggers nothing.')?> <?=scg_t('With ICMP timestamp these targets stay in use as fallback (when no reflector answers) and as the reference for the latency per interface.')?></span>
+			</div>
+		</div>
+		<div class="row scg-ts">
+			<div class="col-sm-3 form-group">
+				<label><?=scg_t('Reflector country')?></label>
+				<input class="form-control" type="text" name="ts_country" maxlength="2" placeholder="<?=h(scg_t('automatic'))?>" value="<?=h($a['ts_country'] ?? '')?>">
+				<span class="help-block"><?=scg_t('Two-letter code (e.g. NL). Empty: the country of the WAN connection (from the Cloudflare trace).')?></span>
+			</div>
+			<div class="col-sm-9 form-group">
+				<label><?=scg_t('Fixed reflectors (IPv4, optional)')?></label>
+				<input class="form-control" type="text" name="ts_manual" value="<?=h($a['ts_manual'] ?? '')?>">
+				<span class="help-block"><?=scg_t('Empty: automatic selection. The pfSense loads the reflector list from github.com/tievolu/timestamp-reflectors once a week (about 15 MB, only the entries of the country are kept), tests 100 random entries and uses the %d with the lowest, stable ping time, preferably from different networks. Lowest ping time from this connection means closest to its gateway. Reflectors that stop answering are replaced; the selection is renewed daily.', SCG_AR_TS_COUNT)?></span>
+			</div>
+			<div class="col-sm-12">
+				<b><?=scg_t('Current selection')?>:</b>
+				<?php if ($tssel && !empty($tssel['chosen'])): ?>
+					<?=h($tssel['country'] ?: '-')?> &middot; <?=h(date('Y-m-d H:i', (int)$tssel['t']))?> &middot;
+					<?=scg_t('%d tested, %d answered', (int)$tssel['tested'], (int)$tssel['answered'])?>
+					<?php if (($tssel['src'] ?? '') === 'subregion'): ?>(<?=scg_t('too few in the country, region added')?>)<?php elseif (($tssel['src'] ?? '') === 'world'): ?>(<?=scg_t('country unknown or too few entries, worldwide list')?>)<?php endif; ?>
+					<?php if (!empty($tssel['err'])): ?><span class="text-danger">&middot; <?=h($tssel['err'])?></span><?php endif; ?>
+					<ul style="margin-bottom:6px">
+					<?php foreach ($tssel['chosen'] as $c): ?>
+						<li><?=h($c['ip'])?> &middot; <?=h($c['rtt'])?> ms<?=$c['descr'] !== '' ? ' &middot; ' . h($c['descr']) : ''?><?=$c['city'] !== '' ? ' (' . h($c['city']) . ')' : ''?></li>
+					<?php endforeach; ?>
+					</ul>
+				<?php elseif ($tssel && !empty($tssel['err'])): ?>
+					<span class="text-danger"><?=h($tssel['err'])?></span>
+				<?php else: ?>
+					<span class="text-muted"><?=scg_t('none yet')?></span>
+				<?php endif; ?>
+				<?php if ($tsbusy): ?><span class="text-info"><i class="fa-solid fa-spinner fa-spin"></i> <?=scg_t('selection running')?></span><?php endif; ?>
+				<button type="submit" form="scg_tsselect" class="btn btn-xs btn-default" style="margin-left:10px" <?=$tsbusy ? 'disabled' : ''?>><i class="fa-solid fa-magnifying-glass"></i> <?=scg_t('Select reflectors now')?></button>
 			</div>
 			<div class="col-sm-3 form-group">
 				<label><?=scg_t('Measure throughput at')?></label>
@@ -216,6 +266,7 @@ function dir_rows($d, $label, $a, $pipes) {
 	<button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> <?=scg_t('Save')?></button>
 </nav>
 </form>
+<form method="post" action="firewall_shaper_autorate.php" id="scg_tsselect"><input type="hidden" name="act" value="tsselect"></form>
 
 <script type="text/javascript">
 //<![CDATA[
@@ -235,6 +286,10 @@ events.push(function() {
 			if (overwrite || $.trim(el.val()) === '') el.val(Math.round(x * r) / r);
 		});
 	}
+	/* Reflector fields only with ICMP timestamp */
+	function tsToggle() { $('.scg-ts').toggle($('#pingmode').val() === 'ts'); }
+	$('#pingmode').on('change', tsToggle);
+	tsToggle();
 	/* On change only fill empty fields, own values are kept */
 	$('.scg-pipe').on('change', function() { fill($(this).data('dir'), false); });
 	/* Button: always recalculate */

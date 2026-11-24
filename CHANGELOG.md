@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.12
+- Autorate: new ping type **ICMP timestamp** (issue #15). Timestamp replies
+  (ICMP type 14) carry the reflector's receive and transmit time, so the
+  delay is split into upload and download. The clock offset cancels out
+  against a per-reflector upload baseline that follows clock drift while the
+  line is clean. Congestion is still detected from the round-trip time; the
+  direction that carries the rise is the one that is lowered, the other
+  direction holds ("congestion in the other direction"). Without timestamp
+  data the previous load rules apply.
+- Reflectors from github.com/tievolu/timestamp-reflectors (downloaded by the
+  pfSense weekly, filtered to the WAN country from the Cloudflare trace or a
+  set country; sub-region or worldwide if the country has too few). The
+  selection (`shaperclassgen_autorate.php select`, run in the background by
+  the service, daily and when reflectors fail) tests 100 random entries three
+  times and keeps the 4 with the lowest, stable RTT and a steady clock,
+  preferably from different /16 networks, plus spares. Fixed reflectors can
+  be entered instead.
+- The echo targets keep running in timestamp mode as fallback (used for
+  control when no reflector answers) and as the reference for the latency
+  per interface, whose probes stay echo pings.
+- Limiter Live shows upload and download delay rise per reflector and in the
+  10-second figures, and which direction is congested.
+
 ## 0.6.11
 - Releases also contain `pfSense-2.9.0-pkg-ShaperClassGen.pkg` (same
   FreeBSD 16 base as 2.9.1).
