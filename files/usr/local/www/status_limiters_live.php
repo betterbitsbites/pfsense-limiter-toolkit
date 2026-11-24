@@ -1004,6 +1004,7 @@ events.push(function() {
 		var a = data.autorate;
 		if (!a || !a.control || !a.dirs || !Object.keys(a.dirs).length) { $('#scg_autorate').html(''); return; }
 		var maxDelay = 0;
+		var late = a.late ? a.late[0] + a.late[1] : 0;
 		$.each(a.refl || {}, function(ip, r) { if (r.delta !== null && r.delta > maxDelay) maxDelay = r.delta; });
 		['down', 'up'].forEach(function(d) {
 			if (!a.dirs[d]) return;
@@ -1016,7 +1017,8 @@ events.push(function() {
 		var h = '<div class="panel panel-default" data-scg-sec="autorate"><div class="panel-heading"><h2 class="panel-title">Autorate ' +
 			' <small>' + (a.source ? t('measured at') + ' ' + esc(sourceText(a.source)) : '') +
 			(a.resets ? ' &middot; ' + t('%s&times; reapplied after filter reload', a.resets) : '') +
-			(a.discarded ? ' &middot; ' + t('%s samples discarded due to processing pause', a.discarded) : '') + '</small></h2></div><div class="panel-body"><div class="row">';
+			(a.discarded ? ' &middot; ' + t('%s samples discarded due to processing pause', a.discarded) : '') +
+			(late ? ' &middot; ' + t('%s late replies (counted as lost)', late) : '') + '</small></h2></div><div class="panel-body"><div class="row">';
 		['down', 'up'].forEach(function(d) {
 			var x = a.dirs[d];
 			if (!x) return;
@@ -1042,10 +1044,12 @@ events.push(function() {
 				'<path class="ach" d="' + sparkPath(hist.map(function(v) { return v[1]; }), mx, 300, 60, true) + '"/>' +
 				'<path class="lim" d="' + sparkPath(hist.map(function(v) { return v[0]; }), mx, 300, 60, false) + '"/></svg></div>';
 		});
-		if (a.discarded || a.resets) {
+		if (a.discarded || a.resets || late) {
 			h += '<div class="col-md-4"><small class="text-muted">' +
 				(a.resets ? t('%s&times; reapplied after filter reload', a.resets) + '<br>' : '') +
-				(a.discarded ? t('%s samples discarded due to processing pause', a.discarded) : '') + '</small></div>';
+				(a.discarded ? t('%s samples discarded due to processing pause', a.discarded) + '<br>' : '') +
+				(late ? '<span title="' + esc(t('Replies that arrived after 2 s: Autorate pings %s, latency probes %s', a.late[0], a.late[1])) + '">' +
+					t('%s late replies (counted as lost)', late) + '</span>' : '') + '</small></div>';
 		}
 		h += '</div><div class="scg-legend"><span><i style="background:#d89b2b"></i>Limit</span><span><i style="background:#2f9e75"></i>' + t('achieved') + '</span></div></div></div>';
 		$('#scg_autorate').html(h);

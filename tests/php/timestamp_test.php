@@ -142,3 +142,55 @@ for ($i = 0; $i < 40; $i++) {
 check(!$ar->tsActive($t) && $ar->bloat, 'no reflector answers: echo target detects congestion');
 $mem = $ar->memory();
 check(isset($mem['tsup']) && is_array($mem['tsup']), 'memory contains upload baselines');
+
+/* direction from the median over reflectors: one outlier does not tip it, small rises do not count */
+function mk4() {
+	$cfg = scg_ar_settings();
+	$cfg['enable'] = true;
+	$cfg['pingmode'] = 'ts';
+	$cfg['reflectors'] = '192.0.2.1';
+	$cfg['up'] = array('pipe' => 'LimUp', 'min' => 1, 'base' => 40, 'max' => 40);
+	$cfg['down'] = array('pipe' => 'LimDown', 'min' => 80, 'base' => 800, 'max' => 800);
+	$ar = new SCGAutorate($cfg, array());
+	$ar->resolve(array(3 => array('name' => 'LimDown'), 4 => array('name' => 'LimUp')));
+	$ar->setTsReflectors(array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4'));
+	return $ar;
+}
+/* $rise = ip => array(upload rise, download rise) */
+function run4($ar, $secs, $rise, &$t) {
+	$verdicts = array();
+	for ($i = 0; $i < $secs * 2; $i++) {
+		for ($k = 0; $k < 2; $k++) {
+			foreach (array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4') as $j => $ip) {
+				list($xu, $xd) = $rise[$ip] ?? array(0, 0);
+				$t1 = fmod($t * 1000, SCG_AR_TS_DAY);
+				$rtt = 15 + $xu + $xd;
+				$t2 = fmod($t1 + 100 * $j + 7 + $xu, SCG_AR_TS_DAY);
+				$ar->onRtt($ip, $rtt, $t, array($t1, floor($t2), floor($t2), $t1 + $rtt));
+				$t += 0.06;
+			}
+		}
+		$ar->tick($t, array(3 => array('bw' => $ar->dirs['down']['shaper'] * 1000, 'bytes' => 0),
+			4 => array('bw' => $ar->dirs['up']['shaper'] * 1000, 'bytes' => 0)), array('down' => 0, 'up' => 0));
+		if ($ar->bloat) {
+			$verdicts[] = json_encode($ar->bloatDir);
+		}
+	}
+	return array_count_values($verdicts);
+}
+$t += 30;
+$ar = mk4();
+run4($ar, 15, array(), $t);
+$v = run4($ar, 4, array('203.0.113.1' => array(45, 4), '203.0.113.2' => array(44, 4), '203.0.113.3' => array(46, 2), '203.0.113.4' => array(25, 40)), $t);
+check(array_keys($v) === array('{"up":true,"down":false}'), 'outlier reflector does not tip the verdict: ' . json_encode($v));
+$t += 30;
+$ar = mk4();
+run4($ar, 15, array(), $t);
+$all = array();
+foreach (array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4') as $ip) {
+	$all[$ip] = array(40, 9);
+}
+$v = run4($ar, 4, $all, $t);
+check(array_keys($v) === array('{"up":true,"down":false}'), 'download rise below half the threshold is not congestion: ' . json_encode($v));
+$st = $ar->status('socket');
+check(is_array($st['owdmed']) && $st['owdmed'][0] > 30 && isset($st['late']), 'status has median rise and late counter');

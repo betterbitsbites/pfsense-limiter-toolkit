@@ -94,8 +94,10 @@ History of changes: `CHANGELOG.md`.
   get type-13 requests; upload rise = (t2 − t1) − per-reflector upload
   baseline, download rise = RTT rise − upload rise. The upload baseline only
   follows while the RTT rise is below half the threshold (clock drift).
-  Bloat is still decided by RTT; the window entries carry direction flags,
-  the majority sets `bloatDir`, only that direction is lowered. Echo targets
+  Bloat is still decided by RTT; the direction (`bloatDir`) comes from the
+  median over reflectors of each one's 1-s average (`owdMedian`), a
+  direction counts with a rise ≥ threshold/2 and ≥ 25 % of the total; the
+  window majority is only the fallback. Only that direction is lowered. Echo targets
   get role `ref` (fallback when no reflector answered for 5 s, reference for
   latency per interface). Reflector list from tievolu/timestamp-reflectors is
   downloaded, never shipped (no license); selection runs as

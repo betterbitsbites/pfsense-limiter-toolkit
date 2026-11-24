@@ -383,6 +383,8 @@ class SCGPingerSocket {
 	private $pending = array();
 	private $gen = array();       /* Kanal => Generation (neue ICMP-ID) */
 	private $tos = 0;             /* aktuell am Socket gesetzter TOS-Wert */
+	private $expired = array();   /* als verloren gewertete Pings der letzten 10 s: Schluessel => Kanal */
+	public $late = array(0, 0);   /* Antworten nach Ablauf (als verloren gezaehlt): Kanal 0 / Kanaele 1..n */
 
 	function __construct() {
 		if (!function_exists('socket_create')) {
@@ -395,6 +397,12 @@ class SCGPingerSocket {
 			return;
 		}
 		socket_set_nonblock($this->sock);
+		/*
+		 * Grosser Empfangspuffer: Der Raw-Socket bekommt jede ICMP-Antwort des
+		 * Systems. Haengt der Dienst kurz (dnctl, Konfiguration lesen), liefe
+		 * ein kleiner Puffer ueber und Antworten gingen als "Verlust" verloren.
+		 */
+		@socket_set_option($this->sock, SOL_SOCKET, SO_RCVBUF, 1048576);
 		$this->id = getmypid() & 0xffff;
 		$this->ok = true;
 	}
@@ -503,6 +511,12 @@ class SCGPingerSocket {
 				continue;
 			}
 			$k = $h['id'] . '|' . $from . '|' . $h['seq'];
+			if (!isset($this->pending[$k]) && isset($this->expired[$k])) {
+				/* Antwort kam, aber erst nach Ablauf: war als Verlust gezaehlt */
+				$this->late[$this->expired[$k][1] > 0 ? 1 : 0]++;
+				unset($this->expired[$k]);
+				continue;
+			}
 			if (isset($this->pending[$k])) {
 				/* ip, rtt_ms, Sendezeitpunkt (ns), Kanal, Timestamps */
 				$p = $this->pending[$k];
@@ -523,11 +537,18 @@ class SCGPingerSocket {
 	/* Unbeantwortete Pings nach $ms als verloren werten: array(array(ip, Kanal), ...) */
 	function expire($ms) {
 		$lost = array();
-		$lim = hrtime(true) - $ms * 1e6;
+		$now = hrtime(true);
+		$lim = $now - $ms * 1e6;
 		foreach ($this->pending as $k => $p) {
 			if ($p[0] < $lim) {
 				$lost[] = array($p[2], $p[1]);
+				$this->expired[$k] = array($now, $p[1]);
 				unset($this->pending[$k]);
+			}
+		}
+		foreach ($this->expired as $k => $e) {
+			if ($e[0] < $now - 10e9) {
+				unset($this->expired[$k]);
 			}
 		}
 		return $lost;
@@ -650,6 +671,7 @@ class SCGAutorate {
 	public $lowLoadShare = 0.02;  /* Mindestlast (Anteil am Limit), damit eine Richtung als genutzt gilt */
 	public $lowLoadKbit = 500;    /* und mindestens 0,5 Mbit/s Durchsatz */
 	public $resets = 0;
+	public $late = array(0, 0);   /* verspaetete Antworten (vom Pinger): Kanal 0 / Interface-Kanaele */
 	public $lastReset = null;     /* letzte Abweichung Kernel <-> gesetzter Wert (Diagnose) */
 	/*
 	 * ICMP-Timestamp: Reflektoren mit Rolle 'ctl' regeln, Echo-Ziele haben dann
@@ -661,6 +683,8 @@ class SCGAutorate {
 	public $echoIps = array();
 	public $bloatDir = null;
 	public $refSamples = array();   /* Echo-Referenz im Timestamp-Betrieb: array(t, rtt) */
+	public $owdRecent = array();    /* Anstieg je Richtung der letzten 2 s: array(t, ip, hin, zurueck) */
+	public $owdMed = null;          /* Median ueber die Reflektoren im letzten Takt: array(hin, zurueck) */
 	public $tsInfo = array();       /* Herkunft der Reflektoren fuer die Anzeige */
 	private $savedBase = array();
 	private $savedUp = array();
@@ -762,6 +786,38 @@ class SCGAutorate {
 		$this->refl = $new;
 	}
 
+	/*
+	 * Median der Richtungs-Anstiege ueber die Reflektoren: je Reflektor das
+	 * Mittel der letzten Sekunde. Braucht mindestens 2 Reflektoren (oder alle,
+	 * wenn nur einer eingetragen ist). Liefert array(hin, zurueck) oder null.
+	 */
+	function owdMedian($now) {
+		$per = array();
+		foreach ($this->owdRecent as $o) {
+			if ($o[0] >= $now - 1.0) {
+				$per[$o[1]][] = array($o[2], $o[3]);
+			}
+		}
+		$nts = 0;
+		foreach ($this->refl as $r) {
+			$nts += ($r['role'] === 'ctl' && $r['ts']) ? 1 : 0;
+		}
+		if (count($per) < min(2, max(1, $nts))) {
+			return null;
+		}
+		$us = $ds = array();
+		foreach ($per as $list) {
+			$us[] = array_sum(array_column($list, 0)) / count($list);
+			$ds[] = array_sum(array_column($list, 1)) / count($list);
+		}
+		$med = function ($v) {
+			sort($v);
+			$n = count($v);
+			return ($n % 2) ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2;
+		};
+		return array($med($us), $med($ds));
+	}
+
 	/* Liefert mindestens ein Timestamp-Reflektor Antworten (letzte 5 s)? */
 	function tsActive($now) {
 		foreach ($this->refl as $r) {
@@ -860,14 +916,19 @@ class SCGAutorate {
 			$r['dup'] = $du;
 			$r['ddown'] = $dd;
 			$r['tslast'] = $now;
+			$this->owdRecent[] = array($now, $ip, $du, $dd);
+			while ($this->owdRecent && $this->owdRecent[0][0] < $now - 2) {
+				array_shift($this->owdRecent);
+			}
 		}
 		$this->record($now, $rtt, $dr, false, $du, $dd);
 		/* Fenster: array(Stau, Upload betroffen, Download betroffen, Richtung bekannt) */
 		$bl = ($dr > $thr);
 		$e = array($bl, false, false, false);
 		if ($bl && $du !== null) {
+			/* Richtung betroffen: eigener Anstieg mindestens halbe Schwelle und mindestens ein Viertel des Ganzen */
 			$share = max(0.0, min($dr, $du)) / $dr;
-			$e = array(true, $share >= 0.25, $share <= 0.75, true);
+			$e = array(true, $du >= $thr / 2 && $share >= 0.25, $dd >= $thr / 2 && $share <= 0.75, true);
 		}
 		$this->window[] = $e;
 		if (count($this->window) > $this->winsize) {
@@ -1214,9 +1275,29 @@ class SCGAutorate {
 			}
 		}
 		$this->bloat = ($n >= $this->winbloat);
-		/* Richtung: genug Stau-Proben mit Timestamps, Mehrheit entscheidet */
-		$this->bloatDir = ($this->bloat && $nd >= $this->winbloat)
-			? array('up' => 2 * $nu >= $nd, 'down' => 2 * $ndn >= $nd) : null;
+		/*
+		 * Richtung: Mittel je Reflektor ueber die letzte Sekunde, davon der
+		 * Median ueber alle Reflektoren. Ein einzelner Ausreisser kippt so die
+		 * Entscheidung nicht. Betroffen ist eine Richtung, deren Anstieg
+		 * mindestens die halbe Schwelle und ein Viertel des Ganzen ausmacht.
+		 * Ohne genug Timestamp-Daten: Mehrheit der Stau-Proben im Fenster.
+		 */
+		$this->owdMed = $this->owdMedian($now);
+		$this->bloatDir = null;
+		if ($this->bloat) {
+			$half = floatval($this->cfg['threshold']) / 2;
+			if ($this->owdMed !== null) {
+				list($mu, $md) = $this->owdMed;
+				$sum = max(0.0, $mu) + max(0.0, $md);
+				$up = $mu >= $half && $mu >= 0.25 * $sum;
+				$down = $md >= $half && $md >= 0.25 * $sum;
+				if ($up || $down) {
+					$this->bloatDir = array('up' => $up, 'down' => $down);
+				}
+			} elseif ($nd >= $this->winbloat && ($nu || $ndn)) {
+				$this->bloatDir = array('up' => 2 * $nu >= $nd, 'down' => 2 * $ndn >= $nd);
+			}
+		}
 		if ($this->bloat) {
 			if ($this->bloatSince === null) {
 				$this->bloatSince = $now;
@@ -1412,7 +1493,9 @@ class SCGAutorate {
 			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats(),
 			'iflat' => $iflat, 'iflat_class' => $iflat ? $iflat[0]['class'] : '',
 			'pingmode' => $this->tsmode ? 'ts' : 'echo', 'tsactive' => $this->tsActive($now),
-			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo);
+			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo,
+			'owdmed' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)),
+			'late' => $this->late);
 	}
 }
 
@@ -2118,6 +2201,7 @@ function scg_ar_run() {
 			$next_baseline = $now + 60;
 		}
 		if ($now >= $next_status) {
+			$ar->late = isset($pinger->late) ? $pinger->late : array(0, 0);
 			@file_put_contents(SCG_AR_STATUS . '.tmp', json_encode($ar->status($pinger->mode, $pinger->err)));
 			@rename(SCG_AR_STATUS . '.tmp', SCG_AR_STATUS);
 			$next_status = $now + 1;

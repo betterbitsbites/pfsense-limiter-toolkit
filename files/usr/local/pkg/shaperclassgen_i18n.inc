@@ -479,6 +479,8 @@ function scg_dict_de() {
 		'none yet' => 'noch keine',
 		'selection running' => 'Auswahl läuft',
 		'too few in the country, region added' => 'zu wenige im Land, Region dazugenommen',
+		'%s late replies (counted as lost)' => '%s verspätete Antworten (als Verlust gezählt)',
+		'Replies that arrived after 2 s: Autorate pings %s, latency probes %s' => 'Antworten, die erst nach 2 s kamen: Autorate-Pings %s, Latenz-Proben %s',
 	);
 	return $d;
 }

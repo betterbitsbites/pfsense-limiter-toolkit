@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.14
+- Autorate, ICMP timestamp: steadier direction decision (issue #15). The
+  direction is now taken from the median over the reflectors of each
+  reflector's average in the last second, instead of a vote over the last
+  6 single samples; one outlier reflector no longer turns "upload" into
+  "both directions". A direction only counts as congested when its own rise
+  is at least half the threshold (and at least a quarter of the total).
+- Pinger: 1 MB receive buffer on the raw socket, so replies are not dropped
+  while the service is briefly busy. Replies that arrive after the 2 s
+  timeout (already counted as lost) are counted separately for Autorate
+  pings and latency probes (`late` in the status, shown in Limiter Live) to
+  tell local delays from real loss.
+
 ## 0.6.13
 - Autorate service: config changes were never picked up on pfSense 2.9
   (issue #14). The service re-read the configuration with `parse_config()`,
