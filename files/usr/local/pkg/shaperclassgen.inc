@@ -24,7 +24,7 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.21');
+define('SCG_VERSION', '0.6.22');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 /* Signal an den Autorate-Dienst: Konfiguration, Limiter und Probe-Kanaele neu einlesen */
 define('SCG_AR_RELOAD', '/var/run/scg_autorate.reload');

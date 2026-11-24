@@ -2186,6 +2186,8 @@ function scg_ar_run() {
 	$ts_next_spawn = 0;
 	$ts_lossnap = array();
 	$next_rot0 = microtime(true) + SCG_AR_LAT_ROTATE;
+	/* Reflektoren erst nach einer Minute bewerten (Start, Grundlatenzen) */
+	$ts_health_after = microtime(true) + 60;
 	if ($ar->tsmode && !$ts_on) {
 		$ar->tsInfo = array('src' => 'none', 'err' => 'ICMP timestamps need the PHP sockets extension');
 	}
@@ -2316,7 +2318,26 @@ function scg_ar_run() {
 					$ar->tsInfo = array('src' => 'auto', 'country' => $sel['country'] ?? '', 'list' => $sel['src'] ?? '',
 						't' => $sel['t'] ?? null, 'err' => $sel['err'] ?? '');
 				}
-				$dead = $ar->deadTs($now);
+				/*
+				 * Reflektoren nur bewerten, wenn die Leitung selbst antwortet: nicht
+				 * waehrend und kurz nach einer Pause (Speedtest), nicht in der ersten
+				 * Minute nach dem Start, und "tot" nur, wenn die Echo-Ziele in
+				 * derselben Zeit geantwortet haben. Sonst ist es die Leitung.
+				 */
+				$health = !$ar->paused && $now >= $ts_health_after;
+				$echo_ok = false;
+				foreach ($echo_ips as $eip) {
+					if (isset($ar->refl[$eip]) && $ar->refl[$eip]['last'] >= $now - 5) {
+						$echo_ok = true;
+					}
+				}
+				$dead = array();
+				if ($health && $echo_ok) {
+					foreach ($ar->deadTs($now) as $ip) {
+						$dead[] = $ip;
+						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (no answer for 30 s, echo targets answer)', $ip));
+					}
+				}
 				/*
 				 * Reflektoren mit viel Verlust (manche begrenzen Timestamp-Antworten)
 				 * ersetzen – aber nur, wenn sie deutlich mehr verlieren als die
@@ -2333,7 +2354,7 @@ function scg_ar_run() {
 					$win[$ip] = array($c[0] - $prev[0], $c[1] - $prev[1]);
 					$ts_lossnap[$ip] = array($c[0], $c[1]);
 				}
-				foreach (scg_ar_lossy($win, $ts_used) as $ip => $info) {
+				foreach ($health ? scg_ar_lossy($win, $ts_used) : array() as $ip => $info) {
 					if (!in_array($ip, $dead, true)) {
 						$dead[] = $ip;
 						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (%.0f %% loss, other targets %.0f %%)', $ip, $info[0], $info[1]));
@@ -2346,7 +2367,7 @@ function scg_ar_run() {
 						$bases[$ip] = $ar->refl[$ip]['baseline'];
 					}
 				}
-				foreach (scg_ar_base_outliers($bases) as $ip => $info) {
+				foreach ($health ? scg_ar_base_outliers($bases) : array() as $ip => $info) {
 					if (!in_array($ip, $dead, true)) {
 						$dead[] = $ip;
 						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (base latency %.0f ms, others %.0f ms)', $ip, $info[0], $info[1]));
@@ -2450,6 +2471,10 @@ function scg_ar_run() {
 			clearstatcache(true, SCG_AR_PAUSE);
 			$pz = file_exists(SCG_AR_PAUSE) ? intval(@file_get_contents(SCG_AR_PAUSE)) : 0;
 			$ar->paused = ($pz > time());
+			if ($ar->paused) {
+				/* nach dem Speedtest 10 s Ruhe, bevor Reflektoren wieder bewertet werden */
+				$ts_health_after = $now + 10;
+			}
 			/* Sicherheitsnetz: gedrosselte Limiter eines abgebrochenen exklusiven Tests zuruecksetzen */
 			if (!$ar->paused && file_exists(SCG_ST_SQUEEZE)) {
 				$sq = json_decode((string)@file_get_contents(SCG_ST_SQUEEZE), true);

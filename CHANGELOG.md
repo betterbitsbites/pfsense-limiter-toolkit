@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.22
+- Reflector health checks (no answer, high loss, high base latency) are
+  skipped while Autorate is paused (speed test) and for 10 s after it, and
+  in the first minute after the service starts. A reflector counts as "no
+  answer" only if the echo targets answered in the same time. Before, a
+  stretch of seconds-long delays (speed test upload, heavy congestion)
+  right after a restart replaced and excluded all four good reflectors
+  (issue #15).
+- Replacements because a reflector stopped answering are logged too.
+
 ## 0.6.21
 - Pinger diagnostics: a reply counts as "stray" only when it comes from one
   of the service's own Autorate targets and carries an ICMP ID the service
