@@ -270,3 +270,15 @@ for ($ch = 1; $ch <= 16; $ch++) {
 	$probeIds[] = $pg->icmpId($ch) & 63;
 }
 check($a1 != $a2 && $a1b != $a1 && ($a1 & 63) >= 32 && max($probeIds) < 32, 'per-target IDs, rotate, disjoint from probe IDs');
+
+/* stray replies: only our targets with IDs we gave them */
+$pg = new SCGPingerSocket();
+$own = new ReflectionMethod($pg, 'isOwnId0');
+$own->setAccessible(true);
+$i1 = $pg->icmpId0('203.0.113.1');
+$pg->rotate0();
+$i2 = $pg->icmpId0('203.0.113.1');
+$pg->rotate0();
+check($own->invoke($pg, $pg->icmpId0('203.0.113.1'), '203.0.113.1') && $own->invoke($pg, $i2, '203.0.113.1'), 'current and previous ID count as ours');
+check(!$own->invoke($pg, $i1, '203.0.113.1'), 'ID two generations old does not');
+check(!$own->invoke($pg, $pg->icmpId0('203.0.113.1'), '1.1.1.1') && !$own->invoke($pg, ($i2 + 64) & 0xffff, '203.0.113.9'), 'other hosts and foreign IDs are not stray');

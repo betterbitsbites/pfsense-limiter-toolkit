@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.21
+- Pinger diagnostics: a reply counts as "stray" only when it comes from one
+  of the service's own Autorate targets and carries an ICMP ID the service
+  gave that target (current or previous generation). Before, replies to
+  other programs' pings (gateway monitoring, the reflector selection) were
+  counted too and filled the per-target list with foreign addresses.
+
 ## 0.6.20
 - Autorate pings get their own ICMP ID per target, renewed every 5 minutes
   (new pf states). Before, all Autorate pings ran under one ID for hours;

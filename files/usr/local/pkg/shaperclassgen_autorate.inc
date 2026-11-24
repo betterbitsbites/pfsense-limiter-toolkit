@@ -438,9 +438,22 @@ class SCGPingerSocket {
 		$this->gen0++;
 	}
 
-	/* Gehoert die ID zu unseren Autorate-Pings (irgendeine Generation)? */
-	private function isId0($id) {
-		return (($id - $this->id) & 63) >= 32;
+	/*
+	 * Antwort von einem unserer Autorate-Ziele mit einer ID, die wir ihm
+	 * gegeben haben (aktuelle oder vorige Generation)? Der Raw-Socket sieht
+	 * auch Antworten auf Pings anderer Programme (Gateway-Ueberwachung,
+	 * Reflektor-Auswahl); die zaehlen nicht.
+	 */
+	private function isOwnId0($id, $ip) {
+		if (!isset($this->slot[$ip])) {
+			return false;
+		}
+		foreach (array($this->gen0, $this->gen0 - 1) as $g) {
+			if ($g >= 0 && $id == (($this->id + 32 + $this->slot[$ip] + 64 * $g) & 0xffff)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/*
@@ -580,7 +593,7 @@ class SCGPingerSocket {
 				}
 				$out[] = array($from, ($now - $p[0]) / 1e6, $p[0], $p[1], $ts);
 				unset($this->pending[$k]);
-			} elseif ($this->isId0($h['id'])) {
+			} elseif ($this->isOwnId0($h['id'], $from)) {
 				/* Antwort mit unserer ID, aber ohne passende Anfrage (Diagnose) */
 				$this->tally($from, 0, 4);
 			}
