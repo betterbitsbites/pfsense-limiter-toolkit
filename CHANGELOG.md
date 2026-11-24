@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.18
+- READMEs: credit for cake-autorate (OpenWrt, lynxthecat and contributors),
+  which inspired Autorate (independent implementation for dummynet, no code
+  taken), and for the timestamp reflector list by tievolu.
+
 ## 0.6.17
 - Autorate, ICMP timestamp: a reflector is only replaced for loss when it
   loses clearly more than the other targets in the same check (> 10 % and

@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.17) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.18) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -136,6 +136,11 @@ package offers four ways that can be combined:
 
 Firewall > Traffic Shaper > Autorate adjusts the running limiter bandwidth
 (`dnctl pipe N config bw …`); the saved configuration stays untouched.
+
+Autorate is inspired by [cake-autorate](https://github.com/lynxthecat/cake-autorate)
+(OpenWrt) by lynxthecat and contributors; this is an independent
+implementation for dummynet limiters, no code was taken. The ICMP timestamp
+reflector list comes from [tievolu/timestamp-reflectors](https://github.com/tievolu/timestamp-reflectors).
 
 - Pings 2–3 reflectors (default 1.1.1.1, 9.9.9.9, 8.8.8.8) several times per
   second and learns each one's base latency.

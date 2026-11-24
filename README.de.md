@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.17)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.18)
 
 [English](README.md) · Deutsch
 
@@ -142,6 +142,11 @@ passiert nie einen Limiter, sie zeigt also nur die Leitung. Mit
 ## Autorate
 
 ![Autorate-Einstellungen und Dienststatus](docs/images/autorate.png)
+
+Autorate ist angelehnt an [cake-autorate](https://github.com/lynxthecat/cake-autorate)
+(OpenWrt) von lynxthecat und Mitwirkenden; es ist eine eigenständige
+Umsetzung für dummynet-Limiter, Code wurde nicht übernommen. Die Liste der
+ICMP-Timestamp-Reflektoren stammt von [tievolu/timestamp-reflectors](https://github.com/tievolu/timestamp-reflectors).
 
 **Firewall > Traffic Shaper > Autorate** regelt die Bandbreite der Limiter
 laufend nach. Download-Shaping wirkt nur, solange der eigene Limiter die
