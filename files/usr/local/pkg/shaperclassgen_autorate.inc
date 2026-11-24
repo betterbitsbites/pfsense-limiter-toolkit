@@ -650,6 +650,7 @@ class SCGAutorate {
 	public $lowLoadShare = 0.02;  /* Mindestlast (Anteil am Limit), damit eine Richtung als genutzt gilt */
 	public $lowLoadKbit = 500;    /* und mindestens 0,5 Mbit/s Durchsatz */
 	public $resets = 0;
+	public $lastReset = null;     /* letzte Abweichung Kernel <-> gesetzter Wert (Diagnose) */
 	/*
 	 * ICMP-Timestamp: Reflektoren mit Rolle 'ctl' regeln, Echo-Ziele haben dann
 	 * die Rolle 'ref' (Ausweichziel und Referenz fuer die Latenz je Interface).
@@ -1247,6 +1248,7 @@ class SCGAutorate {
 			$kernel = $p['bw'] / 1000;
 			if ($x['applied'] !== null && abs($kernel - $x['applied']) > 0.02 * $x['applied']) {
 				$this->resets++;
+				$this->lastReset = array('t' => round($now), 'dir' => $d, 'num' => $x['num'], 'kernel' => round($kernel), 'expected' => round($x['applied']));
 				$x['applied'] = null;
 			}
 			$x['load'] = $x['shaper'] > 0 ? $x['achieved'] / $x['shaper'] : 0;
@@ -1405,7 +1407,7 @@ class SCGAutorate {
 		}
 		return array('t' => microtime(true), 'dirs' => $dirs, 'refl' => $refl, 'bloat' => $this->bloat,
 			'window' => "{$n}/" . count($this->window), 'threshold' => floatval($this->cfg['threshold']),
-			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'discarded' => $this->discarded,
+			'mode' => $mode, 'err' => $err, 'resets' => $this->resets, 'lastreset' => $this->lastReset, 'discarded' => $this->discarded,
 			'source' => $this->source, 'pid' => getmypid(), 'control' => $this->control, 'paused' => $this->paused,
 			'hist' => $this->hist, 'rhist' => $this->rhist, 'stats' => $this->stats(),
 			'iflat' => $iflat, 'iflat_class' => $iflat ? $iflat[0]['class'] : '',
@@ -1873,6 +1875,11 @@ function scg_ar_run() {
 	$last_rx_end = null;
 	$stall_end = null;
 	$cfg_mtime = null;
+	$cfg_err = false;
+	/* Signal von Anwenden/Limiter-Neuanlage: alles sofort neu einlesen */
+	clearstatcache(true, SCG_AR_RELOAD);
+	$sig_mtime = @filemtime(SCG_AR_RELOAD);
+	$sig_force = false;
 	/* Latenz je Interface: Kanal (1..n) => array('tag', 'tos', 'next', 'i') */
 	$latch = array();
 	$latsig = null;
@@ -1891,15 +1898,22 @@ function scg_ar_run() {
 			$cfile = (isset($g['conf_path']) ? $g['conf_path'] : '/cf/conf') . '/config.xml';
 			clearstatcache(true, $cfile);
 			$mt = @filemtime($cfile);
-			$cfg_changed = ($mt !== false && $cfg_mtime !== null && $mt != $cfg_mtime);
-			if ($cfg_changed && function_exists('parse_config')) {
-				global $config;
-				$fresh = @parse_config(true);
-				if (is_array($fresh) && !empty($fresh)) {
-					$config = $fresh;
+			$cfg_changed = $sig_force || ($mt !== false && $cfg_mtime !== null && $mt != $cfg_mtime);
+			$sig_force = false;
+			if ($cfg_changed) {
+				if (scg_cfg_reload()) {
+					$cfg_err = false;
+				} else {
+					/* Nicht eingelesen: beim naechsten Durchlauf erneut versuchen */
+					if (!$cfg_err) {
+						syslog(LOG_WARNING, 'ShaperClassGen Autorate: configuration could not be re-read');
+					}
+					$cfg_err = true;
+					$mt = $cfg_mtime;
+					$sig_force = true;
 				}
 			}
-			if ($mt !== false) {
+			if ($mt !== false && $mt !== null) {
 				$cfg_mtime = $mt;
 			}
 			list($pname) = scg_dn_names();
@@ -2032,6 +2046,13 @@ function scg_ar_run() {
 		}
 		$now = microtime(true);
 		if ($now >= $next_tick) {
+			clearstatcache(true, SCG_AR_RELOAD);
+			$smt = @filemtime(SCG_AR_RELOAD);
+			if ($smt !== false && $smt !== $sig_mtime) {
+				$sig_mtime = $smt;
+				$sig_force = true;
+				$next_resolve = 0;
+			}
 			/* Speedtest-Pause: Datei mit Ablaufzeit, verwaiste Dateien laufen von selbst ab */
 			clearstatcache(true, SCG_AR_PAUSE);
 			$pz = file_exists(SCG_AR_PAUSE) ? intval(@file_get_contents(SCG_AR_PAUSE)) : 0;

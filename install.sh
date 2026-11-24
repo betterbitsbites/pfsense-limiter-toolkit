@@ -19,7 +19,7 @@ if [ "$1" = "--build" ]; then
 fi
 
 NAME="pfSense-pkg-ShaperClassGen"
-VERSION="0.6.12"
+VERSION="0.6.13"
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d /tmp/scgbuild.XXXXXX)
 ROOT="${WORK}/root"

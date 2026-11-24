@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.13
+- Autorate service: config changes were never picked up on pfSense 2.9
+  (issue #14). The service re-read the configuration with `parse_config()`,
+  which no longer exists there; it skipped silently and kept the config it
+  had at start. Latency probes then kept the DSCP values and limiter numbers
+  of the old rules (wrong queues, implausible queue delays) and the table
+  could stay empty after "Generate / Update" until the service was
+  restarted. Now `config_read_file()` (pfSense 2.7+) is used, with
+  `parse_config()` only as fallback on older versions; a failed re-read is
+  logged and retried.
+- Apply, "Remove generated objects" and the limiter re-create signal the
+  service (`/var/run/scg_autorate.reload`): within one control tick it
+  re-reads the configuration, maps the limiters again and gives the probes
+  new ICMP IDs.
+- Status: the last "reapplied after filter reload" event is kept with time,
+  direction, kernel and expected bandwidth (`lastreset` in
+  `/var/run/scg_autorate.json`) to see why the counter rises.
+
 ## 0.6.12
 - Autorate: new ping type **ICMP timestamp** (issue #15). Timestamp replies
   (ICMP type 14) carry the reflector's receive and transmit time, so the

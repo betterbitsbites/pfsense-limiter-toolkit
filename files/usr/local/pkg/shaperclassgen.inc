@@ -24,8 +24,10 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.12');
+define('SCG_VERSION', '0.6.13');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
+/* Signal an den Autorate-Dienst: Konfiguration, Limiter und Probe-Kanaele neu einlesen */
+define('SCG_AR_RELOAD', '/var/run/scg_autorate.reload');
 define('SCG_QTAG', '[SCG]');      /* Prefix der Queue-Beschreibung */
 define('SCG_RTAG', 'SCG:');       /* Prefix der Regelbeschreibung bis 0.1.2 */
 define('SCG_RTAG2', 'SCG Pipe ');  /* Prefix ab 0.1.3: zeigt die Limiter-Pipes */
@@ -49,6 +51,31 @@ function scg_cfg_get($path, $default = null) {
 		$p = $p[$k];
 	}
 	return $p;
+}
+
+/*
+ * Konfiguration im laufenden Prozess neu einlesen (Autorate-Dienst nach
+ * Aenderungen). pfSense 2.7+ hat config_read_file(); parse_config() gibt es
+ * dort nicht mehr (fehlt z. B. in 2.9). Liefert true, wenn neu eingelesen.
+ */
+function scg_cfg_reload() {
+	global $config;
+	if (function_exists('config_read_file')) {
+		return @config_read_file(true, false) !== false;
+	}
+	if (function_exists('parse_config')) {
+		$fresh = @parse_config(true);
+		if (is_array($fresh) && !empty($fresh)) {
+			$config = $fresh;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Dem Autorate-Dienst melden, dass sich Regeln oder Limiter geaendert haben */
+function scg_ar_signal() {
+	@file_put_contents(SCG_AR_RELOAD, (string)microtime(true));
 }
 
 function scg_cfg_set($path, $value) {
@@ -1495,6 +1522,8 @@ function scg_apply($s, &$errors, &$msgs) {
 	$msgs[] = scg_t('%d queues and %d floating match rules created. Firewall is being reloaded.', count($plan['queues']), count($new));
 	/* Geaenderte Queues verlieren im laufenden Betrieb ihr AQM (CoDel): Limiter neu anlegen */
 	$rc = scg_dn_recreate();
+	/* Dienst: Konfiguration, Limiter-Nummern und Probe-Kanaele sofort neu einlesen */
+	scg_ar_signal();
 	if ($rc !== null && $rc[0] > 0) {
 		$msgs[] = $rc[1] == 0
 			? scg_t('CoDel re-activated on %d queues (limiters re-created).', $rc[0])
@@ -1552,6 +1581,7 @@ function scg_remove_all(&$msgs) {
 	write_config("ShaperClassGen: generierte Objekte entfernt");
 	scg_dnctl_delete($oldnums);
 	filter_configure();
+	scg_ar_signal();
 	$msgs[] = scg_t('%d queues and %d rules removed.', count($oldnums), $nrules);
 	return true;
 }
@@ -1776,6 +1806,8 @@ function scg_dn_recreate($rulesfile = SCG_DN_RULES) {
 	mwexec('/sbin/dnctl ' . escapeshellarg($pfile), true);
 	@unlink($qfile);
 	@unlink($pfile);
+	/* Neue Limiter: Autorate setzt seine Bandbreite neu, Probes bekommen neue States */
+	scg_ar_signal();
 	$o = array();
 	exec('/sbin/dnctl queue show 2>/dev/null', $o);
 	$after = 0;

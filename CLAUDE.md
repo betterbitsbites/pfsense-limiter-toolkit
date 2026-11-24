@@ -109,6 +109,11 @@ History of changes: `CHANGELOG.md`.
   the settings. Each channel needs its own ICMP ID (pf keys ICMP states by
   ID; a shared ID would reuse the unmarked state without queue); IDs rotate
   every 5 min and on config changes.
+- **Service config re-read:** the long-running service re-reads the config
+  with `scg_cfg_reload()` (`config_read_file(true, false)` on 2.7+;
+  `parse_config()` does not exist on 2.9) when `config.xml` changes or when
+  `/var/run/scg_autorate.reload` is touched (`scg_ar_signal()`: apply,
+  remove, `scg_dn_recreate()`); failures are retried, never skipped.
 - **Graphs:** download and upload differ by ~20× on asymmetric lines, so
   combined graphs show throughput in % of the Autorate maximum (right axis)
   and latency in ms (left axis); real values in the tooltip.
