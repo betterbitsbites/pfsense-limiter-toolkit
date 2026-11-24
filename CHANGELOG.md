@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.17
+- Autorate, ICMP timestamp: a reflector is only replaced for loss when it
+  loses clearly more than the other targets in the same check (> 10 % and
+  more than twice the median loss of all Autorate targets, reflectors and
+  echo targets, plus 5 points; at least 100 pings). With a fixed 10 % limit,
+  general packet loss during downstream congestion replaced good reflectors
+  and used up the spares (issue #15).
+- Cut log: decreases decided by the window majority (no median available)
+  are labelled `window` instead of `owd`.
+
 ## 0.6.16
 - Autorate, ICMP timestamp: when the timestamps say that no direction is
   clearly congested (both median rises below half the threshold) although a

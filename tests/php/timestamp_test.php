@@ -231,3 +231,14 @@ $v = run4($ar, 2, array('203.0.113.3' => array(25, 25), '203.0.113.4' => array(2
 check($ar->bloat && $ar->bloatDir === array('up' => false, 'down' => false) && !$ar->dirHeld,
 	'spike without clear direction: no direction, not held (' . json_encode($v) . ')');
 check($ar->dirs['down']['state'] === 'bloat_unclear', 'state: short spike, no direction clearly congested');
+
+/* lossy reflectors: replaced only when clearly worse than the other targets */
+$cand = array('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4');
+$win = array('203.0.113.1' => array(150, 147), '203.0.113.2' => array(150, 117), '203.0.113.3' => array(150, 133),
+	'203.0.113.4' => array(150, 148), '192.0.2.1' => array(150, 149), '192.0.2.2' => array(150, 146));
+$l = scg_ar_lossy($win, $cand);
+check(array_keys($l) === array('203.0.113.2', '203.0.113.3'), 'rate-limiting reflectors replaced (22 %, 11 % vs. ~2 %): ' . json_encode($l));
+$win = array('203.0.113.1' => array(150, 122), '203.0.113.2' => array(150, 112), '203.0.113.3' => array(150, 135),
+	'203.0.113.4' => array(150, 130), '192.0.2.1' => array(150, 136), '192.0.2.2' => array(150, 137));
+check(scg_ar_lossy($win, $cand) === array(), 'general loss during congestion (9–25 %): nothing replaced');
+check(scg_ar_lossy(array('203.0.113.1' => array(50, 10)), $cand) === array(), 'too few pings: nothing replaced');

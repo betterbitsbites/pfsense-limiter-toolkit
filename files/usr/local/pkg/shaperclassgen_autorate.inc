@@ -1441,7 +1441,7 @@ class SCGAutorate {
 				if ($now - $x['lastDec'] >= $this->decRefractory) {
 					$new = max($x['min'], min($x['shaper'], $x['achieved']) * $dec);
 					$this->cuts[] = array('t' => round($now, 1), 'dir' => $d, 'from' => round($x['shaper']), 'to' => round($new),
-						'load' => round($load, 2), 'why' => $this->bloatDir === null ? ($load >= 0.5 ? 'load' : 'lowload') : ($this->dirHeld ? 'held' : 'owd'),
+						'load' => round($load, 2), 'why' => $this->bloatDir === null ? ($load >= 0.5 ? 'load' : 'lowload') : ($this->dirHeld ? 'held' : ($this->owdMed === null ? 'window' : 'owd')),
 						'owd' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)));
 					if (count($this->cuts) > 20) {
 						array_shift($this->cuts);
@@ -1711,6 +1711,36 @@ function scg_ts_rank($res, $count = SCG_AR_TS_COUNT, $spares = 16) {
 		}
 	}
 	return array('chosen' => $chosen, 'spare' => $spare, 'score' => $score);
+}
+
+/*
+ * Verlustreiche Reflektoren: $win = ip => array(gesendet, beantwortet) im
+ * letzten Pruefzeitraum (alle Autorate-Ziele, auch Echo-Ziele), $cand = die
+ * pruefbaren Reflektoren. Ersetzt wird, wer bei mindestens 100 Pings ueber
+ * 10 % verliert und mehr als das Doppelte des Medians aller Ziele plus
+ * 5 Prozentpunkte. Liefert ip => array(Verlust %, Median %).
+ */
+function scg_ar_lossy($win, $cand) {
+	$loss = array();
+	foreach ($win as $ip => $w) {
+		if ($w[0] >= 100) {
+			$loss[$ip] = 100.0 * max(0, $w[0] - $w[1]) / $w[0];
+		}
+	}
+	if (count($loss) < 3) {
+		return array();
+	}
+	$v = array_values($loss);
+	sort($v);
+	$n = count($v);
+	$med = ($n % 2) ? $v[intdiv($n, 2)] : ($v[$n / 2 - 1] + $v[$n / 2]) / 2;
+	$out = array();
+	foreach ($cand as $ip) {
+		if (isset($loss[$ip]) && $loss[$ip] > 10 && $loss[$ip] > 2 * $med + 5) {
+			$out[$ip] = array($loss[$ip], $med);
+		}
+	}
+	return $out;
 }
 
 /* Timestamp-Antwort brauchbar? Standardzeit (geprueft im Pinger) und Sendezeit nicht vor Empfangszeit */
@@ -2093,22 +2123,24 @@ function scg_ar_run() {
 				$dead = $ar->deadTs($now);
 				/*
 				 * Reflektoren mit viel Verlust (manche begrenzen Timestamp-Antworten)
-				 * ebenfalls ersetzen: > 10 % seit der letzten Pruefung, mindestens 100 Pings.
+				 * ersetzen – aber nur, wenn sie deutlich mehr verlieren als die
+				 * anderen Ziele im selben Zeitraum. Bei Stau verlieren alle; dann
+				 * wird nichts ersetzt (scg_ar_lossy).
 				 */
-				foreach ($ts_used as $ip) {
+				$win = array();
+				foreach (array_unique(array_merge($ts_used, $echo_ips)) as $ip) {
 					$c = $pinger->count[$ip][0] ?? null;
 					if ($c === null) {
 						continue;
 					}
 					$prev = $ts_lossnap[$ip] ?? array(0, 0);
-					$ns = $c[0] - $prev[0];
-					$na = $c[1] - $prev[1];
-					if ($ns >= 100) {
-						if (($ns - $na) > 0.1 * $ns && !in_array($ip, $dead, true)) {
-							$dead[] = $ip;
-							syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (%.0f %% loss)', $ip, 100 * ($ns - $na) / $ns));
-						}
-						$ts_lossnap[$ip] = array($c[0], $c[1]);
+					$win[$ip] = array($c[0] - $prev[0], $c[1] - $prev[1]);
+					$ts_lossnap[$ip] = array($c[0], $c[1]);
+				}
+				foreach (scg_ar_lossy($win, $ts_used) as $ip => $info) {
+					if (!in_array($ip, $dead, true)) {
+						$dead[] = $ip;
+						syslog(LOG_NOTICE, sprintf('ShaperClassGen Autorate: reflector %s replaced (%.0f %% loss, other targets %.0f %%)', $ip, $info[0], $info[1]));
 					}
 				}
 				if ($dead) {

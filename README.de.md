@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.16)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.17)
 
 [English](README.md) · Deutsch
 
