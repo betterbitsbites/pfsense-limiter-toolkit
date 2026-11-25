@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.25
+- Autorate, failover (gateway groups): the service checks every 5 s which
+  interface the default route uses. If it is another physical WAN than the
+  measured one (e.g. a group fails over from cable to LTE/5G; two equal
+  results in a row), Autorate either keeps controlling the same limiters
+  within new **backup values** (min/base/max per direction, own learned
+  base, throughput measured at the backup interface), so the class weights
+  also work on the backup line, or, without backup values, pauses control.
+  Data volume: only the echo targets are pinged, once per second;
+  reflectors and latency probes pause. Back on the main WAN everything
+  returns, with the main learned base. Shown on the Autorate page and in
+  Limiter Live; logged in the system log (issue #20).
+- Interfaces whose gateway is a member of a gateway group count as WAN
+  (Limiter Live totals, latency probe rules), also when the gateway is only
+  set under System > Routing.
+
 ## 0.6.24
 - Limiter Live, Interfaces: interfaces with policy routing show which
   gateway their current connections use, e.g. "via VPN_A 80 % · VPN_B

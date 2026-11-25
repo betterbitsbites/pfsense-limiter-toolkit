@@ -24,7 +24,7 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.24');
+define('SCG_VERSION', '0.6.25');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 /* Signal an den Autorate-Dienst: Konfiguration, Limiter und Probe-Kanaele neu einlesen */
 define('SCG_AR_RELOAD', '/var/run/scg_autorate.reload');
@@ -1971,7 +1971,32 @@ function scg_if_bytes($real) {
 
 function scg_if_is_wan($if) {
 	return (function_exists('interface_has_gateway') && interface_has_gateway($if)) ||
-		(function_exists('interface_has_gatewayv6') && interface_has_gatewayv6($if));
+		(function_exists('interface_has_gatewayv6') && interface_has_gatewayv6($if)) ||
+		in_array($if, scg_gwgroup_ifaces(), true);
+}
+
+/*
+ * Interfaces, deren Gateways Mitglied einer Gateway-Gruppe sind (z. B. ein
+ * LTE/5G-Ersatz-WAN, dessen Gateway nur unter System > Routing steht).
+ * Gateways an internen Interfaces fuer statische Routen zaehlen nicht.
+ */
+function scg_gwgroup_ifaces() {
+	$gwif = array();
+	foreach ((array)scg_cfg_get('gateways/gateway_item', array()) as $g) {
+		if (is_array($g) && !empty($g['name']) && !empty($g['interface'])) {
+			$gwif[$g['name']] = $g['interface'];
+		}
+	}
+	$out = array();
+	foreach ((array)scg_cfg_get('gateways/gateway_group', array()) as $grp) {
+		foreach ((array)($grp['item'] ?? array()) as $it) {
+			$name = explode('|', (string)$it)[0];
+			if (isset($gwif[$name])) {
+				$out[$gwif[$name]] = true;
+			}
+		}
+	}
+	return array_keys($out);
 }
 
 /* Tunnel-Interfaces (VPN): ihr Verkehr laeuft zusaetzlich verschluesselt ueber das echte WAN */

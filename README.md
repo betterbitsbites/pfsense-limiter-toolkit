@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.24) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.25) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -157,6 +157,16 @@ reflector list comes from [tievolu/timestamp-reflectors](https://github.com/tiev
   Stopping or uninstalling restores the configured bandwidth.
 - Measuring mode (default on) records latency even when Autorate is off.
 - Service: `/usr/local/etc/rc.d/scg_autorate.sh start|stop|restart|status`.
+
+**Backup line (failover).** With a gateway group as default gateway (e.g.
+cable as tier 1, LTE/5G as tier 2) the service notices within about 10 s
+when the default route moves to the backup WAN. With backup values
+(min/base/max per direction) it keeps controlling the same limiters within
+the backup line's limits, with its own learned base, so the class weights
+keep working on the slower line; without values it pauses control. During
+the failover it only pings the echo targets once per second (data cap);
+reflectors and latency probes pause. Members of gateway groups count as WAN
+in Limiter Live.
 
 **Ping type ICMP timestamp (per direction).** An echo ping only measures the
 round trip, so with congestion Autorate cannot tell which direction is full

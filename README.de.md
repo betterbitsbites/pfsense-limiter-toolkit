@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.24)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.25)
 
 [English](README.md) · Deutsch
 
@@ -191,6 +191,16 @@ Kabelsegment), wird der Limiter automatisch nachgeführt.
   konfigurierte Bandbreite wiederhergestellt.
 - Dienst: `/usr/local/etc/rc.d/scg_autorate.sh start|stop|restart|status`,
   Status in `/var/run/scg_autorate.json`, Anzeige in Limiter Live.
+
+**Ersatzleitung (Failover).** Mit einer Gateway-Gruppe als Standard-Gateway
+(z. B. Kabel als Tier 1, LTE/5G als Tier 2) merkt der Dienst innerhalb von
+etwa 10 s, wenn die Standardroute auf das Ersatz-WAN wechselt. Mit
+Ersatzwerten (Min/Basis/Max je Richtung) regelt er dieselben Limiter in den
+Grenzen der Ersatzleitung weiter, mit eigener gelernter Basis – die
+Klassengewichte wirken so auch auf der langsameren Leitung; ohne Werte
+pausiert die Regelung. Während des Failovers pingt er nur die Echo-Ziele,
+einmal pro Sekunde (Datenvolumen); Reflektoren und Latenz-Proben pausieren.
+Mitglieder von Gateway-Gruppen zählen in Limiter Live als WAN.
 
 **Ping-Art ICMP-Timestamp (je Richtung).** Ein Echo-Ping misst nur Hin- und
 Rückweg zusammen; bei Stau weiß Autorate nicht, welche Richtung voll ist, und

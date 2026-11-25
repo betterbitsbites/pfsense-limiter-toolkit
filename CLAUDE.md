@@ -129,6 +129,15 @@ History of changes: `CHANGELOG.md`.
   interface state and its WAN/inside pair); reset per interface with
   `pfctl -i <real> -Fs` plus the WAN NAT pairs. AJAX POSTs send the
   csrf-magic token.
+- **Failover (gateway groups):** the service compares the default-route
+  interface (`route -n get default`, every 5 s, 2 equal results) with the
+  measured WAN; another physical WAN (not a tunnel) = failover.
+  `SCGAutorate::setFailover` swaps min/base/max to the backup values
+  (`bk`) on the same pipes with a separate learned base (`learned_bk` in
+  the memory file), or pauses control (state `failover`). Echo targets only,
+  1/s; reflectors and latency probes pause. Gateway-group members count as
+  WAN (`scg_gwgroup_ifaces`); gateways for static routes on internal
+  interfaces do not.
 - **Service config re-read:** the long-running service re-reads the config
   with `scg_cfg_reload()` (`config_read_file(true, false)` on 2.7+;
   `parse_config()` does not exist on 2.9) when `config.xml` changes or when

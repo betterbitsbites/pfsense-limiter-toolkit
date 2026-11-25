@@ -65,6 +65,11 @@ if ($_POST) {
 		$a['ts_country'] = strtoupper(trim($_POST['ts_country'] ?? ''));
 		$a['ts_manual'] = implode(' ', scg_ar_iplist($_POST['ts_manual'] ?? ''));
 		$a['wanif'] = trim($_POST['wanif'] ?? '');
+		foreach (array('down', 'up') as $d) {
+			foreach (array('min', 'base', 'max') as $k) {
+				$a['bk'][$d][$k] = trim(str_replace(',', '.', $_POST["bk_{$d}_{$k}"] ?? ''));
+			}
+		}
 		foreach (array('interval', 'threshold', 'decfactor', 'incstep', 'tick') as $k) {
 			$a[$k] = trim(str_replace(',', '.', $_POST[$k] ?? ''));
 		}
@@ -149,6 +154,10 @@ function dir_rows($d, $label, $a, $pipes) {
 			<?php foreach ($status['dirs'] as $d => $x): ?>
 				&nbsp;&middot;&nbsp; <?=$d == 'down' ? 'Download' : 'Upload'?>: <b><?=h(round($x['shaper'] / 1000, 1))?> Mbit/s</b> (<?=h(scg_ar_state_text($x['state']))?>)
 			<?php endforeach; ?>
+			<?php if (!empty($status['failover'])): ?>
+				&nbsp;&middot;&nbsp; <span class="label label-warning"><?=h(scg_t('Failover: default route via %s', $status['failover']['descr']))?></span>
+				<small><?=$status['failover']['profile'] === 'backup' ? scg_t('backup values active') : scg_t('control paused')?></small>
+			<?php endif; ?>
 		<?php endif; ?>
 		&nbsp;&middot;&nbsp; <a href="status_limiters_live.php"><?=scg_t('Live view')?></a>
 		<form method="post" action="firewall_shaper_autorate.php" style="display:inline">
@@ -272,6 +281,26 @@ function dir_rows($d, $label, $a, $pipes) {
 				<input class="form-control" type="text" name="tick" value="<?=h($a['tick'])?>">
 			</div>
 		</div>
+	</div>
+</div>
+
+<div class="panel panel-default">
+	<div class="panel-heading"><h2 class="panel-title"><?=scg_t('Backup line (failover)')?></h2></div>
+	<div class="panel-body">
+		<p class="help-block"><?=scg_t('If the default route goes through another WAN (e.g. a gateway group fails over from cable to LTE/5G), Autorate notices it within about 10 s. With values below it keeps controlling the same limiters within the limits of the backup line, with its own learned base; the class weights then also work on the backup line. Without values control pauses while the backup line is active. In both cases only the ping targets above are pinged, once per second; reflectors and latency probes pause to save data volume. The speed test only runs on the measured WAN anyway.')?></p>
+		<table class="table table-condensed">
+			<thead><tr><th><?=scg_t('Direction')?></th><th><?=scg_t('Minimum (Mbit/s)')?></th><th><?=scg_t('Base (Mbit/s)')?></th><th><?=scg_t('Maximum (Mbit/s)')?></th></tr></thead>
+			<tbody>
+			<?php foreach (array('down' => 'Download', 'up' => 'Upload') as $d => $lbl): ?>
+				<tr><td><b><?=$lbl?></b></td>
+				<?php foreach (array('min', 'base', 'max') as $k): ?>
+					<td><input class="form-control" type="text" name="bk_<?=$d?>_<?=$k?>" value="<?=h($a['bk'][$d][$k] ?? '')?>"></td>
+				<?php endforeach; ?>
+				</tr>
+			<?php endforeach; ?>
+			</tbody>
+		</table>
+		<p class="help-block"><?=scg_t('Rules of your own that put the traffic of the backup WAN into further limiters still apply on top; the smaller limit wins.')?></p>
 	</div>
 </div>
 

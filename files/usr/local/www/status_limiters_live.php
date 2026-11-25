@@ -1052,7 +1052,9 @@ events.push(function() {
 		arHist.delay.push(Math.max(0, maxDelay));
 		if (arHist.delay.length > 300) arHist.delay.shift();
 
-		var h = '<div class="panel panel-default" data-scg-sec="autorate"><div class="panel-heading"><h2 class="panel-title">Autorate ' +
+		var fo = a.failover ? ' <span class="label label-warning">' + t('Failover: default route via %s', esc(a.failover.descr)) + '</span> <small>' +
+			(a.failover.profile === 'backup' ? t('backup values active') : t('control paused')) + '</small>' : '';
+		var h = '<div class="panel panel-default" data-scg-sec="autorate"><div class="panel-heading"><h2 class="panel-title">Autorate' + fo + ' ' +
 			' <small>' + (a.source ? t('measured at') + ' ' + esc(sourceText(a.source)) : '') +
 			(a.resets ? ' &middot; ' + t('%s&times; reapplied after filter reload', a.resets) : '') +
 			(a.discarded ? ' &middot; ' + t('%s samples discarded due to processing pause', a.discarded) : '') +

@@ -66,6 +66,12 @@ function scg_ar_defaults() {
 		'pingmode' => 'echo',   /* 'echo' = RTT, 'ts' = ICMP-Timestamp: Verzoegerung je Richtung */
 		'ts_country' => '',     /* Land der Reflektoren (ISO, 2 Buchstaben), '' = automatisch */
 		'ts_manual' => '',      /* feste Reflektoren statt automatischer Auswahl */
+		/*
+		 * Failover: geht die Standardroute ueber ein anderes WAN (Gateway-Gruppe),
+		 * regelt Autorate dieselben Limiter mit diesen Werten (Mbit/s). Leer =
+		 * Regelung pausiert, solange die Ersatzleitung aktiv ist.
+		 */
+		'bk' => array('down' => array('min' => '', 'base' => '', 'max' => ''), 'up' => array('min' => '', 'base' => '', 'max' => '')),
 	);
 }
 
@@ -74,7 +80,11 @@ function scg_ar_settings() {
 	$s = scg_load_settings();
 	$a = (isset($s['autorate']) && is_array($s['autorate'])) ? $s['autorate'] : array();
 	foreach ($d as $k => $v) {
-		if (is_array($v)) {
+		if ($k === 'bk') {
+			foreach (array('down', 'up') as $dir) {
+				$d['bk'][$dir] = array_merge($v[$dir], (isset($a['bk'][$dir]) && is_array($a['bk'][$dir])) ? $a['bk'][$dir] : array());
+			}
+		} elseif (is_array($v)) {
 			$d[$k] = array_merge($v, (isset($a[$k]) && is_array($a[$k])) ? $a[$k] : array());
 		} elseif (array_key_exists($k, $a)) {
 			$d[$k] = $a[$k];
@@ -141,6 +151,17 @@ function scg_ar_validate($a, &$errors) {
 			$errors[] = scg_t('Ping target "%s" is not an IPv4 address.', $r);
 		}
 	}
+	foreach (array('down' => 'Download', 'up' => 'Upload') as $d => $lbl) {
+		$c = $a['bk'][$d] ?? array();
+		$set = array_filter(array($c['min'] ?? '', $c['base'] ?? '', $c['max'] ?? ''), function ($v) { return trim((string)$v) !== ''; });
+		if (!$set) {
+			continue;
+		}
+		if (count($set) < 3 || !is_numeric($c['min']) || !is_numeric($c['base']) || !is_numeric($c['max']) || floatval($c['min']) <= 0 ||
+		    !(floatval($c['min']) <= floatval($c['base']) && floatval($c['base']) <= floatval($c['max']))) {
+			$errors[] = scg_t('Backup line, %s: enter minimum, base and maximum (Mbit/s, minimum <= base <= maximum) or leave all three empty.', $lbl);
+		}
+	}
 	if (!in_array($a['pingmode'] ?? 'echo', array('echo', 'ts'), true)) {
 		$errors[] = scg_t('Unknown ping type.');
 	}
@@ -191,6 +212,7 @@ function scg_ar_state_texts() {
 		'idle' => 'idle',
 		'monitor' => 'measuring only',
 		'paused' => 'paused (speed test running)',
+		'failover' => 'paused (backup line active, no backup values)',
 	);
 	foreach ($t as $k => $v) {
 		$t[$k] = scg_t($v);
@@ -355,6 +377,18 @@ function scg_ar_status() {
  * eigene ICMP-ID: pf ordnet ICMP-States nach ID zu, mit gleicher ID wuerden
  * die markierten Pings im State der unmarkierten landen (ohne Queue).
  */
+/* Interface der IPv4-Standardroute (bei einer Gateway-Gruppe das aktive Mitglied) */
+function scg_ar_default_iface() {
+	$o = array();
+	exec('/sbin/route -n get default 2>/dev/null', $o);
+	foreach ($o as $l) {
+		if (preg_match('/^\s*interface:\s*(\S+)/', $l, $m)) {
+			return $m[1];
+		}
+	}
+	return null;
+}
+
 /* Jetzt in ms seit Mitternacht UTC (mit Nachkommastellen) */
 function scg_ts_now() {
 	return fmod(microtime(true) * 1000, SCG_AR_TS_DAY);
@@ -748,6 +782,13 @@ class SCGAutorate {
 	public $lowLoadKbit = 500;    /* und mindestens 0,5 Mbit/s Durchsatz */
 	public $resets = 0;
 	public $late = array(0, 0);   /* verspaetete Antworten (vom Pinger): Kanal 0 / Interface-Kanaele */
+	/*
+	 * Failover: null = Haupt-WAN aktiv; sonst array('if' => echtes Interface,
+	 * 'descr', 'since', 'profile' => 'backup' (Ersatzwerte) | 'paused').
+	 */
+	public $failover = null;
+	private $mainVals = array();    /* Hauptwerte je Richtung waehrend des Failovers */
+	private $bkLearned = array();   /* gelernte Basis der Ersatzleitung je Richtung (kbit/s) */
 	public $lastReset = null;     /* letzte Abweichung Kernel <-> gesetzter Wert (Diagnose) */
 	/*
 	 * ICMP-Timestamp: Reflektoren mit Rolle 'ctl' regeln, Echo-Ziele haben dann
@@ -797,6 +838,7 @@ class SCGAutorate {
 		$this->control = !empty($cfg['enable']);
 		$baselines = isset($saved['refl']) && is_array($saved['refl']) ? $saved['refl'] : (isset($saved['learned']) ? array() : $saved);
 		$learned = isset($saved['learned']) && is_array($saved['learned']) ? $saved['learned'] : array();
+		$this->bkLearned = isset($saved['learned_bk']) && is_array($saved['learned_bk']) ? $saved['learned_bk'] : array();
 		foreach (array('down', 'up') as $d) {
 			$c = $cfg[$d];
 			if (($c['pipe'] ?? '') === '') {
@@ -1307,7 +1349,94 @@ class SCGAutorate {
 		foreach ($this->dirs as $d => $x) {
 			$l[$d] = array('pipe' => $x['pipe'], 'kbit' => round($x['learned']));
 		}
-		return array('refl' => $b, 'tsup' => $u, 'learned' => $l);
+		$lb = $this->bkLearned;
+		if ($this->failover && $this->failover['profile'] === 'backup') {
+			foreach ($this->dirs as $d => $x) {
+				$lb[$d] = round($x['learned']);
+			}
+		}
+		/* Gelernte Basis des Haupt-WANs bleibt waehrend des Failovers die alte */
+		foreach ($this->mainVals as $d => $mv) {
+			$l[$d]['kbit'] = round($mv['learned']);
+		}
+		return array('refl' => $b, 'tsup' => $u, 'learned' => $l, 'learned_bk' => $lb);
+	}
+
+	/* Ersatzwerte (kbit/s) einer Richtung oder null, wenn nicht vollstaendig eingetragen */
+	function bkVals($d) {
+		$c = $this->cfg['bk'][$d] ?? array();
+		foreach (array('min', 'base', 'max') as $k) {
+			if (!is_numeric($c[$k] ?? '') || floatval($c[$k]) <= 0) {
+				return null;
+			}
+		}
+		return array('min' => floatval($c['min']) * 1000, 'base' => floatval($c['base']) * 1000, 'max' => floatval($c['max']) * 1000);
+	}
+
+	/*
+	 * Failover ein/aus. $if = echtes Interface der Standardroute oder null
+	 * (Haupt-WAN aktiv). Mit Ersatzwerten regelt Autorate dieselben Limiter in
+	 * den Grenzen der Ersatzleitung (eigene gelernte Basis), sonst pausiert die
+	 * Regelung. Beim Wechsel beginnt die Bewertung frisch.
+	 */
+	function setFailover($if, $descr, $now) {
+		$was = $this->failover;
+		if ($if === null && $was === null) {
+			return;
+		}
+		if ($if !== null && $was !== null && $was['if'] === $if) {
+			return;
+		}
+		/* zuerst zurueck auf die Hauptwerte */
+		if ($was !== null && $was['profile'] === 'backup') {
+			foreach ($this->dirs as $d => &$x) {
+				$this->bkLearned[$d] = round($x['learned']);
+				if (isset($this->mainVals[$d])) {
+					foreach (array('min', 'base', 'max', 'learned') as $k) {
+						$x[$k] = $this->mainVals[$d][$k];
+					}
+				}
+			}
+			unset($x);
+		}
+		$this->mainVals = array();
+		$this->failover = null;
+		if ($if !== null) {
+			$usable = true;
+			foreach (array_keys($this->dirs) as $d) {
+				$usable = $usable && $this->bkVals($d) !== null;
+			}
+			$this->failover = array('if' => $if, 'descr' => $descr, 'since' => round($now), 'profile' => $usable && $this->dirs ? 'backup' : 'paused');
+			if ($this->failover['profile'] === 'backup') {
+				foreach ($this->dirs as $d => &$x) {
+					$this->mainVals[$d] = array('min' => $x['min'], 'base' => $x['base'], 'max' => $x['max'], 'learned' => $x['learned']);
+					$bv = $this->bkVals($d);
+					$x['min'] = $bv['min'];
+					$x['base'] = $bv['base'];
+					$x['max'] = $bv['max'];
+					$lb = isset($this->bkLearned[$d]) && is_numeric($this->bkLearned[$d]) ? floatval($this->bkLearned[$d]) : $bv['base'];
+					$x['learned'] = max($bv['min'], min($bv['max'], $lb));
+				}
+				unset($x);
+			}
+		}
+		/* Startwert der neuen Leitung sofort setzen, Messung frisch beginnen */
+		foreach ($this->dirs as $d => &$x) {
+			if ($this->failover === null || $this->failover['profile'] === 'backup') {
+				$x['shaper'] = !empty($this->cfg['learnbase']) ? $x['learned'] : $x['base'];
+				$x['applied'] = null;
+			}
+			$x['lastBytes'] = null;
+			$x['achieved'] = 0.0;
+			$x['cleanSince'] = null;
+			$x['lastDec'] = -1e9;
+		}
+		unset($x);
+		$this->window = array();
+		$this->bloatSince = null;
+		$this->idleBloatSince = null;
+		$this->lastDir = null;
+		$this->owdRecent = array();
 	}
 
 	/* Ziel im Leerlauf: gelernte oder feste Basis */
@@ -1474,9 +1603,10 @@ class SCGAutorate {
 		}
 
 		/* Nur messen: Durchsatz und Last sind bestimmt, Limiter bleiben unveraendert */
-		if (!$this->control || $this->paused) {
+		$foHold = ($this->failover !== null && $this->failover['profile'] === 'paused');
+		if (!$this->control || $this->paused || $foHold) {
 			foreach ($active as $d) {
-				$this->dirs[$d]['state'] = $this->paused ? 'paused' : 'monitor';
+				$this->dirs[$d]['state'] = $this->paused ? 'paused' : ($foHold ? 'failover' : 'monitor');
 				$this->dirs[$d]['cleanSince'] = null;
 			}
 			return $apply;
@@ -1599,6 +1729,7 @@ class SCGAutorate {
 			'bloatdir' => $this->bloatDir, 'ts' => $this->tsInfo,
 			'owdmed' => $this->owdMed === null ? null : array(round($this->owdMed[0], 1), round($this->owdMed[1], 1)),
 			'refstats' => ($this->tsmode && $this->refSamples) ? self::sampleStats($this->refSamples) : null,
+			'failover' => $this->failover,
 			'late' => $this->late, 'dirheld' => $this->dirHeld, 'cuts' => $this->cuts, 'pcount' => $this->pcount,
 			'senderr' => (object)$this->sendErr);
 	}
@@ -2185,6 +2316,11 @@ function scg_ar_run() {
 	$ts_sel_mtime = null;
 	$ts_next_spawn = 0;
 	$ts_lossnap = array();
+	/* Failover: Standardroute alle 5 s pruefen, Wechsel erst nach 2 gleichen Ergebnissen */
+	$fo_next = 0;
+	$fo_cand = null;
+	$fo_count = 0;
+	$cur_iv = null;
 	$next_rot0 = microtime(true) + SCG_AR_LAT_ROTATE;
 	/* Reflektoren erst nach einer Minute bewerten (Start, Grundlatenzen) */
 	$ts_health_after = microtime(true) + 60;
@@ -2236,6 +2372,49 @@ function scg_ar_run() {
 
 	while (true) {
 		$now = microtime(true);
+		/*
+		 * Failover-Erkennung: Laeuft die Standardroute (z. B. Gateway-Gruppe)
+		 * ueber ein anderes physisches WAN als das gemessene, gilt die
+		 * Ersatzleitung. VPN-Tunnel als Standardroute zaehlen nicht (laufen
+		 * ueber das Haupt-WAN).
+		 */
+		if ($now >= $fo_next && $wan) {
+			$fo_next = $now + 5;
+			$def = scg_ar_default_iface();
+			$target = ($def !== null && $def !== $wan[1] && !scg_if_is_tunnel($def)) ? $def : null;
+			if ($target === $fo_cand) {
+				$fo_count++;
+			} else {
+				$fo_cand = $target;
+				$fo_count = 1;
+			}
+			$curIf = $ar->failover ? $ar->failover['if'] : null;
+			if ($fo_count >= 2 && $target !== $curIf) {
+				$descr = $target;
+				foreach (get_configured_interface_with_descr() as $fif => $fd) {
+					if (scg_if_real($fif) === $target) {
+						$descr = $fd;
+					}
+				}
+				$ar->setFailover($target, $descr, $now);
+				if ($target !== null) {
+					syslog(LOG_NOTICE, "ShaperClassGen Autorate: default route via {$descr} ({$target}), " .
+						($ar->failover['profile'] === 'backup' ? 'backup values active' : 'control paused'));
+					/* Volumen sparen: nur Echo-Ziele, einmal pro Sekunde; keine Reflektoren */
+					if ($ts_on) {
+						$set_ts(array());
+					}
+					$cur_iv = max($interval, 1.0);
+				} else {
+					syslog(LOG_NOTICE, 'ShaperClassGen Autorate: default route back on ' . $wan[2]);
+					if ($ts_on && $ts_used) {
+						$set_ts($ts_used);
+					}
+					$cur_iv = null;
+				}
+				$next_resolve = 0;
+			}
+		}
 		if ($now >= $next_resolve) {
 			/*
 			 * Konfiguration nur neu einlesen, wenn config.xml sich geaendert hat
@@ -2268,6 +2447,9 @@ function scg_ar_run() {
 			$ar->resolve($pname);
 			$wan = scg_ar_wan($cfg);
 			$ar->source = $wan ? array('kind' => 'iface', 'descr' => $wan[2], 'real' => $wan[1]) : array('kind' => 'limiter');
+			if ($ar->failover) {
+				$ar->source = array('kind' => 'iface', 'descr' => $ar->failover['descr'], 'real' => $ar->failover['if']);
+			}
 			/*
 			 * Latenz je Interface: Kanaele aus den erzeugten Regeln. Bei jeder
 			 * Konfigurationsaenderung und alle 5 min neue ICMP-IDs, damit ein
@@ -2303,7 +2485,7 @@ function scg_ar_run() {
 					$set_ts($ts_used);
 					$ar->tsInfo = array('src' => 'manual');
 				}
-			} elseif ($ts_on) {
+			} elseif ($ts_on && $ar->failover === null) {
 				clearstatcache(true, SCG_AR_TS_SEL);
 				$smt = @filemtime(SCG_AR_TS_SEL);
 				if ($smt !== false && $smt !== $ts_sel_mtime) {
@@ -2421,12 +2603,13 @@ function scg_ar_run() {
 				} else {
 					$pinger->send($ip);
 				}
-				$next_ping[$ip] = max($t + $interval, $now);
+				$next_ping[$ip] = max($t + ($cur_iv ?? $interval), $now);
 			}
 		}
 		/* Latenz je Interface; waehrend eines Speedtests nicht (Limiter evtl. gedrosselt) */
 		$lat_wake = $next_tick;
-		if (!$ar->paused) {
+		/* Latenz-Proben pausieren auch im Failover (Volumen der Ersatzleitung) */
+		if (!$ar->paused && $ar->failover === null) {
 			foreach ($latch as $ch => &$c) {
 				if ($now >= $c['next']) {
 					$pinger->send($echo_ips[$c['i']++ % count($echo_ips)], $ch, $c['tos']);
@@ -2502,8 +2685,9 @@ function scg_ar_run() {
 				}
 			}
 			$ifbytes = null;
-			if ($wan) {
-				$st = scg_if_bytes($wan[1]);
+			$mif = $ar->failover ? $ar->failover['if'] : ($wan ? $wan[1] : null);
+			if ($mif !== null) {
+				$st = scg_if_bytes($mif);
 				if ($st !== null) {
 					$ifbytes = array('down' => $st['in'], 'up' => $st['out']);
 				}
