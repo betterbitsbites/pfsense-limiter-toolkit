@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.24
+- Limiter Live, Interfaces: interfaces with policy routing show which
+  gateway their current connections use, e.g. "via VPN_A 80 % · VPN_B
+  20 %"; VPN tunnel rows show which interfaces' traffic they carry. Taken
+  from `route-to` in the pf states (queried every 6 s while the Interfaces
+  or Connections panel is shown).
+
 ## 0.6.23
 - Limiter Live, Interfaces: a "Reset states" button per shaped and
   unshaped interface ends all connections of that interface (and their NAT

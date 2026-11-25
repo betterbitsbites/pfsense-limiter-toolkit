@@ -24,7 +24,7 @@ require_once("filter.inc");
 require_once("/usr/local/pkg/shaperclassgen_i18n.inc");
 
 define('SCG_DN_RULES', '/tmp/rules.limiter');
-define('SCG_VERSION', '0.6.23');
+define('SCG_VERSION', '0.6.24');
 define('SCG_BACKUP', '/conf/shaperclassgen.json');
 /* Signal an den Autorate-Dienst: Konfiguration, Limiter und Probe-Kanaele neu einlesen */
 define('SCG_AR_RELOAD', '/var/run/scg_autorate.reload');
@@ -2019,7 +2019,7 @@ function scg_states_parse($lines) {
 				$out[] = $cur;
 			}
 			$cur = array('if' => $m[1], 'proto' => $m[2], 'dir' => $m[5] === '<-' ? 'in' : 'out', 'left' => $m[3], 'lnat' => $m[4],
-				'right' => $m[6], 'rnat' => $m[7] ?? '', 'state' => $m[8], 'age' => 0, 'bytes' => 0, 'id' => '', 'rule' => '');
+				'right' => $m[6], 'rnat' => $m[7] ?? '', 'state' => $m[8], 'age' => 0, 'bytes' => 0, 'id' => '', 'rule' => '', 'rt' => '');
 			continue;
 		}
 		if ($cur === null) {
@@ -2030,6 +2030,10 @@ function scg_states_parse($lines) {
 			$cur['bytes'] = (float)$m[2] + (float)$m[3];
 		} elseif (preg_match('/^\s*id: ([0-9a-f]+) creatorid: ([0-9a-f]+)/', $l, $m)) {
 			$cur['id'] = $m[1] . '/' . $m[2];
+			/* Policy-Routing: "route-to: <Gateway>@<Interface>" */
+			if (preg_match('/route-to: \S*@(\S+)/', $l, $r)) {
+				$cur['rt'] = $r[1];
+			}
 		} elseif (preg_match('/^\s*rule: .*?label "descr=([^"]*)"/', $l, $m)) {
 			$cur['rule'] = $m[1];
 		}
@@ -2096,11 +2100,17 @@ function scg_conn_list($lines = null, $now = null, $limit = 40) {
 	}
 	$snap = array();
 	$list = array();
+	/* Wohin geht der Verkehr der Interfaces? Rate je Interface und Gateway-Interface (route-to) */
+	$routes = array();
 	foreach ($states as $s) {
 		if ($s['id'] === '') {
 			continue;
 		}
 		$snap[$s['id']] = $s['bytes'];
+		if ($s['dir'] === 'in' && !isset($wan[$s['if']]) && isset($pb[$s['id']]) && $s['bytes'] > $pb[$s['id']]) {
+			$via = $s['rt'] !== '' ? $s['rt'] : '';
+			$routes[$s['if']][$via] = ($routes[$s['if']][$via] ?? 0) + ($s['bytes'] - $pb[$s['id']]) * 8 / $dt;
+		}
 		$grp = null;
 		$client = $remote = '';
 		$ids = array($s['id']);
@@ -2139,7 +2149,15 @@ function scg_conn_list($lines = null, $now = null, $limit = 40) {
 		$rb = $b['rate'] ?? -1;
 		return ($rb <=> $ra) ?: ($b['bytes'] <=> $a['bytes']);
 	});
-	return array('t' => $now, 'applied' => $applied, 'total' => count($states), 'list' => array_slice($list, 0, $limit));
+	/* Je Interface: array(array(Gateway-Interface, Bezeichnung, Rate), ...), nach Rate; '' = Standardroute */
+	$rout = array();
+	foreach ($routes as $if => $vias) {
+		arsort($vias);
+		foreach ($vias as $via => $rate) {
+			$rout[$if][] = array($via, $via === '' ? '' : ($realdescr[$via] ?? $via), round($rate));
+		}
+	}
+	return array('t' => $now, 'applied' => $applied, 'total' => count($states), 'list' => array_slice($list, 0, $limit), 'routes' => (object)$rout);
 }
 
 /* States anhand ihrer IDs ("id/creatorid", kommagetrennt) beenden; liefert die Anzahl */

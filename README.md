@@ -4,7 +4,7 @@ English · [Deutsch](README.de.md)
 
 ![pfSense Limiter Toolkit: 12.8 ms average ping at 803 Mbit/s download](docs/images/hero.png)
 
-A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.23) for traffic
+A pfSense package (`pfSense-pkg-ShaperClassGen`, version 0.6.24) for traffic
 shaping with **limiters** (dummynet, WF2Q+). It includes:
 
 - **Class Generator**: creates traffic classes as limiter child queues under
@@ -205,6 +205,9 @@ button that sets it immediately and as a system tunable.
 
 ### Connections and states
 
+- Interfaces with policy routing (e.g. a VLAN that only goes out through
+  VPN tunnels) show **via …** with the share of each gateway; VPN tunnel rows
+  show which interfaces they **carry**.
 - **Reset states** next to each interface in the Interfaces panel ends all
   connections of that interface; programs reconnect through the current
   queues (useful after "Generate / Update").

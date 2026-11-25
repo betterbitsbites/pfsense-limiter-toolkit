@@ -1132,7 +1132,9 @@ events.push(function() {
 					typ += ' <button type="button" class="btn btn-xs btn-default scg-resetif" data-if="' + esc(i.if) + '" data-descr="' + esc(i.descr) + '" title="' +
 						esc(t('End all connections of this interface; they restart through the current queues')) + '"><i class="fa-solid fa-rotate-left"></i> ' + t('Reset states') + '</button>';
 				}
-				body += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(i.descr) + ' <small class="text-muted">' + esc(i.real) + '</small></td><td>' + typ + '</td>' +
+				IFNAME[i.real] = i.descr;
+				var via = (g === 'vpn') ? carriesText(i.real) : (g === 'wan' ? '' : viaText(i.real));
+				body += '<tr class="' + (idle ? 'scg-idle' : '') + '"><td>' + esc(i.descr) + ' <small class="text-muted">' + esc(i.real) + '</small>' + via + '</td><td>' + typ + '</td>' +
 					'<td class="scg-num">' + fmtRate(i.down) + '</td><td class="scg-num">' + fmtRate(i.up) + '</td></tr>';
 			});
 			if (body) rows += '<tr class="scg-group"><td colspan="4">' + titles[g] + '</td></tr>' + body;
@@ -1215,19 +1217,49 @@ events.push(function() {
 		$('#scg_conns').html(html);
 		applyToggles();
 	}
-	var connTimer = null;
+	var connTimer = null, ROUTES = {};
 	function pollConns() {
 		clearTimeout(connTimer);
-		var open = load(secKey('conns')) !== '0';
+		/* Auch fuer "ueber welches Gateway" im Panel Interfaces */
+		var open = load(secKey('conns')) !== '0' || load(secKey('ifaces')) !== '0';
 		if (paused || !open) {
 			if (!$('#scg_conns .panel').length) renderConns({ list: [], total: '–' });
 			connTimer = setTimeout(pollConns, 6000);
 			return;
 		}
 		$.ajax({ url: 'status_limiters_live.php', data: { conns: 1 }, dataType: 'json', cache: false })
-			.done(renderConns)
+			.done(function(d) { ROUTES = d.routes || {}; renderConns(d); if (prev) { renderIfaces(prev); applyToggles(); } })
 			.always(function() { connTimer = setTimeout(pollConns, 6000); });
 	}
+	/* "via PIAVPN_AMS 80 % · WAN 20 %" fuer ein Interface; nur wenn Policy-Routing im Spiel ist */
+	function viaText(real) {
+		var r = ROUTES[real];
+		if (!r || !r.length) return '';
+		var tot = 0;
+		r.forEach(function(v) { tot += v[2]; });
+		if (tot < 8000 || (r.length == 1 && r[0][0] === '')) return '';
+		var parts = [];
+		r.forEach(function(v) {
+			var pc = Math.round(100 * v[2] / tot);
+			if (pc >= 1) parts.push(esc(v[0] === '' ? t('default route') : v[1]) + ' ' + pc + ' %');
+		});
+		return parts.length ? '<br><small class="text-info" title="' + esc(t('Gateway of the current connections (policy routing), share of the traffic')) + '">' + t('via') + ' ' + parts.join(' &middot; ') + '</small>' : '';
+	}
+	/* Fuer VPN-Tunnel: von welchen Interfaces kommt der Verkehr? */
+	function carriesText(real) {
+		var parts = [], tot = 0, from = [];
+		$.each(ROUTES, function(src, r) {
+			r.forEach(function(v) { if (v[0] === real) { from.push([src, v[2]]); tot += v[2]; } });
+		});
+		if (tot < 8000) return '';
+		from.sort(function(a, b) { return b[1] - a[1]; });
+		from.forEach(function(f) {
+			var pc = Math.round(100 * f[1] / tot);
+			if (pc >= 1) parts.push(esc(IFNAME[f[0]] || f[0]) + ' ' + pc + ' %');
+		});
+		return parts.length ? '<br><small class="text-info">' + t('carries') + ' ' + parts.join(' &middot; ') + '</small>' : '';
+	}
+	var IFNAME = {};
 
 	function renderAll(data) {
 		renderCombined(data);

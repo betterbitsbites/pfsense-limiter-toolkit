@@ -1,4 +1,4 @@
-# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.23)
+# pfSense Limiter Toolkit (pfSense-pkg-ShaperClassGen 0.6.24)
 
 [English](README.md) · Deutsch
 
@@ -112,6 +112,9 @@ Knopf an (setzt den Wert sofort und als System Tunable).
 
 ### Verbindungen und States
 
+- Interfaces mit Policy-Routing (z. B. ein VLAN, das nur über VPN-Tunnel
+  hinausgeht) zeigen **über …** mit dem Anteil je Gateway; VPN-Tunnel zeigen,
+  welche Interfaces sie **tragen**.
 - **States zurücksetzen** neben jedem Interface im Panel *Interfaces* beendet
   alle Verbindungen dieses Interfaces; Programme verbinden sich über die
   aktuellen Queues neu (sinnvoll nach „Generate / Update“).

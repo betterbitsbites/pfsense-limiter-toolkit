@@ -31,3 +31,22 @@ check(scg_if_reset_states('lan') === 3, 'reset LAN: 2 LAN states + 1 NAT state a
 $l = (string)@file_get_contents($log);
 check(strpos($l, '-i igb1 -Fs') !== false && strpos($l, 'bbbb000000000002/0000abcd') !== false, 'interface states flushed, NAT state killed');
 check(scg_if_reset_states('wan') === null && scg_if_reset_states('nope') === null, 'WAN and unknown interfaces are refused');
+
+/* gateway per interface (policy routing) from route-to in the states */
+@unlink(SCG_CONNS_SNAP);
+$mk = function ($b1, $b2) {
+	return array(
+		'igb1 tcp 192.0.2.10:443 <- 10.0.1.5:40000       ESTABLISHED:ESTABLISHED',
+		"   age 00:10:00, expires in 23:59:59, 10:20 pkts, 1000:{$b1} bytes, anchor 0, rule 300",
+		'   id: aaaa000000000001 creatorid: 0000abcd route-to: 198.51.100.1@ovpnc1',
+		'igb1 tcp 192.0.2.11:443 <- 10.0.1.6:40001       ESTABLISHED:ESTABLISHED',
+		"   age 00:10:00, expires in 23:59:59, 10:20 pkts, 1000:{$b2} bytes, anchor 0, rule 300",
+		'   id: aaaa000000000002 creatorid: 0000abcd route-to: 203.0.113.1@igb0',
+	);
+};
+$t0 = microtime(true);
+scg_conn_list($mk(0, 0), $t0);
+$r = scg_conn_list($mk(3000000, 1000000), $t0 + 1);
+$rt = (array)$r['routes'];
+check(isset($rt['igb1']) && $rt['igb1'][0][0] === 'ovpnc1' && $rt['igb1'][0][1] === 'VPN_PROVIDER' && $rt['igb1'][0][2] == 24000000 && $rt['igb1'][1][0] === 'igb0',
+	'LAN traffic split by gateway: ' . json_encode($rt['igb1'] ?? null));
